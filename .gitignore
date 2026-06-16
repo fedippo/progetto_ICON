@@ -1,0 +1,6 @@
+/documentazione
+/.idea
+/.obsidian
+/.venv
+/src/*
+requirements.txt
