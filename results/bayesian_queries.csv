@@ -1,0 +1,10 @@
+Query,Variable,State,Probability
+"P(Cluster_Label | {'Primary_Genre': 0, 'Price': 2})",Cluster_Label,0,0.5365228091107701
+"P(Cluster_Label | {'Primary_Genre': 0, 'Price': 2})",Cluster_Label,1,0.1090427821434989
+"P(Cluster_Label | {'Primary_Genre': 0, 'Price': 2})",Cluster_Label,2,0.35443440874573107
+"P(Cluster_Label | {'Price': 0, 'Playtime_Hours': 1})",Cluster_Label,0,0.3586156413213365
+"P(Cluster_Label | {'Price': 0, 'Playtime_Hours': 1})",Cluster_Label,1,0.21365724602934183
+"P(Cluster_Label | {'Price': 0, 'Playtime_Hours': 1})",Cluster_Label,2,0.4277271126493217
+"P(Review_Score_Pct | {'Price': 2, 'Multiplayer': 1})",Review_Score_Pct,0,0.36611589603825795
+"P(Review_Score_Pct | {'Price': 2, 'Multiplayer': 1})",Review_Score_Pct,1,0.3413371905550801
+"P(Review_Score_Pct | {'Price': 2, 'Multiplayer': 1})",Review_Score_Pct,2,0.2925469134066619

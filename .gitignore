@@ -1,6 +1,5 @@
-/documentazione
+/istruzioni
 /.idea
 /.obsidian
 /.venv
-/src/*
-requirements.txt
+/data/raw

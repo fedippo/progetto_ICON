@@ -1,0 +1,5 @@
+Game,Verdict,Approved,Needs_Review,Rejected,Blocking_Violations
+hades_like,approvato,True,False,False,
+short_puzzle_deluxe,revisione,False,True,False,
+underlocalized_action,rifiutato,False,False,True,localizzazione_insufficiente
+overpriced_multiplayer_rpg,rifiutato,False,False,True,incoerenza_genere;rischio_critico

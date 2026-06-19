@@ -1,0 +1,11 @@
+pandas
+numpy
+scikit-learn
+imbalanced-learn
+matplotlib
+seaborn
+pgmpy
+pyswip
+networkx
+kneed
+tqdm
