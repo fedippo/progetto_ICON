@@ -1,4 +1,4 @@
-"""Bayesian Network learning and inference for Steam market risk."""
+"""Apprendimento e inferenza di una rete bayesiana per il rischio commerciale."""
 
 from __future__ import annotations
 
@@ -18,15 +18,22 @@ from config import (
 
 
 def import_pgmpy_dependencies():
-    """Import pgmpy lazily so the file can be inspected without installed deps."""
+    """Importa pgmpy gestendo differenze tra versioni della libreria.
+
+    Alcune versioni usano `BayesianNetwork`, altre `DiscreteBayesianNetwork`; anche
+    gli estimatori dei parametri hanno API diverse. La funzione isola queste
+    differenze e restituisce un dizionario uniforme usato dal resto dello script.
+    """
     try:
         from pgmpy.estimators import BicScore, HillClimbSearch, MaximumLikelihoodEstimator
         from pgmpy.inference import VariableElimination
         try:
+            # Nelle versioni recenti BayesianNetwork e deprecato.
             from pgmpy.models import DiscreteBayesianNetwork as BayesianModel
         except ImportError:
             from pgmpy.models import BayesianNetwork as BayesianModel
         try:
+            # Nuova API per stimare CPD discrete.
             from pgmpy.parameter_estimator import DiscreteMLE
         except ImportError:
             DiscreteMLE = None
@@ -59,7 +66,12 @@ def import_pgmpy_dependencies():
 
 
 def load_bayesian_dataset() -> pd.DataFrame:
-    """Load discretized and clustered data for Bayesian Network learning."""
+    """Carica il dataset adatto alla rete bayesiana.
+
+    Usa il dataset discretizzato e gia arricchito con `Cluster_Label`. Controlla che
+    tutte le variabili previste siano presenti e converte ogni colonna in interi,
+    per rappresentare stati discreti.
+    """
     data_path = Path(CLUSTERED_DISCRETIZED_DATA_PATH)
     if not data_path.exists():
         raise FileNotFoundError(
@@ -73,13 +85,19 @@ def load_bayesian_dataset() -> pd.DataFrame:
 
     bayesian_df = df[BAYESIAN_FEATURES].copy()
     for column in bayesian_df.columns:
+        # Tutte le variabili della rete devono essere stati discreti interi.
         bayesian_df[column] = bayesian_df[column].astype(int)
 
     return bayesian_df
 
 
 def learn_structure(df: pd.DataFrame, pgmpy):
-    """Learn the DAG structure with HillClimbSearch and BIC."""
+    """Apprende automaticamente la struttura della rete bayesiana.
+
+    HillClimbSearch esplora strutture candidate e il punteggio BIC penalizza reti
+    troppo complesse. `BAYESIAN_MAX_INDEGREE` limita il numero massimo di genitori
+    per nodo, rendendo le CPD piu leggibili e meno costose.
+    """
     search = pgmpy["HillClimbSearch"](df)
     try:
         return search.estimate(
@@ -87,6 +105,7 @@ def learn_structure(df: pd.DataFrame, pgmpy):
             max_indegree=BAYESIAN_MAX_INDEGREE,
         )
     except TypeError:
+        # Compatibilita con API pgmpy che accettano il nome dello score come stringa.
         return search.estimate(
             scoring_method="bic-d",
             max_indegree=BAYESIAN_MAX_INDEGREE,
@@ -94,18 +113,29 @@ def learn_structure(df: pd.DataFrame, pgmpy):
 
 
 def fit_model(df: pd.DataFrame, structure, pgmpy):
-    """Fit CPDs for the learned network."""
+    """Stima le tabelle di probabilita condizionata della rete.
+
+    A partire dalla struttura appresa, il modello calcola le CPD sui dati
+    discretizzati. Alla fine `check_model` verifica che la rete sia formalmente
+    consistente prima di procedere con le query.
+    """
     model = pgmpy["BayesianModel"](structure.edges())
     if pgmpy["DiscreteMLE"] is not None:
+        # API recente: fit richiede un estimatore discreto gia inizializzato.
         model.fit(df, estimator=pgmpy["DiscreteMLE"]())
     else:
+        # API precedente: fit accetta la classe MaximumLikelihoodEstimator.
         model.fit(df, estimator=pgmpy["MaximumLikelihoodEstimator"])
     model.check_model()
     return model
 
 
 def save_edges(model) -> pd.DataFrame:
-    """Save learned edges for documentation and inspection."""
+    """Esporta gli archi della rete appresa in un CSV.
+
+    Questo output serve per documentare le dipendenze trovate dall'algoritmo e per
+    commentarle nella relazione senza dover visualizzare direttamente il grafo.
+    """
     edges_df = pd.DataFrame(list(model.edges()), columns=["Source", "Target"])
     Path(BAYESIAN_EDGES_PATH).parent.mkdir(parents=True, exist_ok=True)
     edges_df.to_csv(BAYESIAN_EDGES_PATH, index=False)
@@ -113,22 +143,39 @@ def save_edges(model) -> pd.DataFrame:
 
 
 def most_common_state(df: pd.DataFrame, column: str) -> int:
-    """Return the most frequent discrete state for a column."""
+    """Restituisce lo stato discreto piu frequente di una variabile.
+
+    Viene usato per costruire query dimostrative realistiche, scegliendo un valore
+    osservato spesso nel dataset.
+    """
     return int(df[column].mode().iloc[0])
 
 
 def highest_state(df: pd.DataFrame, column: str) -> int:
-    """Return the highest observed discrete state for a column."""
+    """Restituisce lo stato discreto massimo osservato.
+
+    Per le variabili discretizzate del progetto corrisponde in genere allo stato
+    'alto', ad esempio prezzo alto o playtime alto.
+    """
     return int(df[column].max())
 
 
 def lowest_state(df: pd.DataFrame, column: str) -> int:
-    """Return the lowest observed discrete state for a column."""
+    """Restituisce lo stato discreto minimo osservato.
+
+    Per le variabili discretizzate del progetto corrisponde in genere allo stato
+    'basso', ad esempio prezzo basso.
+    """
     return int(df[column].min())
 
 
 def query_cluster_distribution(inference, evidence: dict) -> list[dict]:
-    """Query P(Cluster_Label | evidence)."""
+    """Calcola la distribuzione del cluster dato uno scenario osservato.
+
+    L'evidenza rappresenta informazioni disponibili prima della pubblicazione, come
+    genere o prezzo. Il risultato indica quale profilo commerciale risulta piu
+    probabile secondo la rete bayesiana.
+    """
     result = inference.query(
         variables=[TARGET_CLUSTER_COLUMN],
         evidence=evidence,
@@ -149,7 +196,12 @@ def query_cluster_distribution(inference, evidence: dict) -> list[dict]:
 
 
 def query_low_review_risk(inference, evidence: dict) -> list[dict]:
-    """Query P(Review_Score_Pct | evidence), used as a reception-risk proxy."""
+    """Calcola la distribuzione del review score dato uno scenario osservato.
+
+    Viene usata per stimare il rischio di ricezione bassa degli utenti. In
+    particolare, uno stato 0 di `Review_Score_Pct` viene interpretato come segnale
+    di rischio commerciale.
+    """
     result = inference.query(
         variables=["Review_Score_Pct"],
         evidence=evidence,
@@ -170,9 +222,15 @@ def query_low_review_risk(inference, evidence: dict) -> list[dict]:
 
 
 def run_business_queries(df: pd.DataFrame, model, pgmpy) -> pd.DataFrame:
-    """Run a compact set of business-oriented inference queries."""
+    """Esegue le query probabilistiche usate nella relazione.
+
+    Le query sono costruite per rappresentare scenari decisionali del publisher:
+    prezzo alto, prezzo basso con durata alta, multiplayer e rischio di review
+    score basso. I risultati vengono salvati in `bayesian_queries.csv`.
+    """
     inference = pgmpy["VariableElimination"](model)
 
+    # Gli stati sono discreti: 0=basso, 1=medio, 2=alto per le feature discretizzate.
     common_genre = most_common_state(df, "Primary_Genre")
     high_price = highest_state(df, "Price")
     low_price = lowest_state(df, "Price")
@@ -205,7 +263,11 @@ def run_business_queries(df: pd.DataFrame, model, pgmpy) -> pd.DataFrame:
 
 
 def run_bayesian_network() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Learn the Bayesian Network and run inference queries."""
+    """Esegue l'intera fase bayesiana.
+
+    Carica i dati discretizzati, apprende la struttura, stima le CPD, salva gli
+    archi e produce le query probabilistiche usate come supporto decisionale.
+    """
     pgmpy = import_pgmpy_dependencies()
     df = load_bayesian_dataset()
     structure = learn_structure(df, pgmpy)

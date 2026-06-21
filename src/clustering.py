@@ -1,4 +1,4 @@
-"""KMeans clustering and Elbow Method for Steam market profiles."""
+"""Clustering KMeans ed Elbow Method per i profili commerciali Steam."""
 
 from __future__ import annotations
 
@@ -10,11 +10,13 @@ import pandas as pd
 try:
     import matplotlib.pyplot as plt
 except ModuleNotFoundError:
+    # Il CSV dell'Elbow Method viene comunque salvato anche senza matplotlib.
     plt = None
 
 try:
     from sklearn.cluster import KMeans
 except ModuleNotFoundError:
+    # Se sklearn non e disponibile, viene usata una piccola implementazione locale.
     KMeans = None
 
 from config import (
@@ -38,7 +40,12 @@ from config import (
 
 
 def load_processed_datasets() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Load clean, normalized and discretized datasets."""
+    """Carica i tre dataset prodotti dal preprocessing.
+
+    Il dataset pulito serve per interpretare i cluster in scala originale; quello
+    normalizzato serve per eseguire KMeans; quello discretizzato ricevera la stessa
+    etichetta di cluster per essere usato nella rete bayesiana.
+    """
     clean_df = pd.read_csv(CLEAN_DATA_PATH)
     normalized_df = pd.read_csv(PROCESSED_DATA_PATH)
     discretized_df = pd.read_csv(DISCRETIZED_DATA_PATH)
@@ -46,14 +53,23 @@ def load_processed_datasets() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
 
 
 def validate_clustering_features(df: pd.DataFrame) -> None:
-    """Check that all clustering features are available."""
+    """Controlla che il dataset contenga le feature richieste da KMeans.
+
+    Se una colonna manca, viene sollevato un errore esplicito prima di eseguire il
+    clustering. Questo evita risultati silenziosamente sbagliati o errori meno
+    leggibili in NumPy/scikit-learn.
+    """
     missing = [column for column in CLUSTERING_FEATURES if column not in df.columns]
     if missing:
         raise ValueError(f"Missing clustering features: {missing}")
 
 
 def compute_inertia(data: np.ndarray, labels: np.ndarray, centers: np.ndarray) -> float:
-    """Compute within-cluster sum of squares."""
+    """Calcola l'inertia, cioe la somma delle distanze quadratiche intra-cluster.
+
+    Questo valore misura quanto i punti sono compatti intorno ai rispettivi
+    centroidi. Viene usato sia dal fallback KMeans sia dall'Elbow Method.
+    """
     distances = data - centers[labels]
     return float(np.sum(distances * distances))
 
@@ -65,17 +81,24 @@ def fallback_kmeans(
     max_iter: int = KMEANS_MAX_ITER,
     random_state: int = RANDOM_STATE,
 ) -> tuple[np.ndarray, np.ndarray, float]:
-    """Small deterministic KMeans fallback used when scikit-learn is unavailable."""
+    """Esegue una versione minimale e deterministica di KMeans.
+
+    Serve come fallback quando `scikit-learn` non e installato. Ripete piu
+    inizializzazioni casuali, aggiorna centroidi e assegna ogni punto al cluster piu
+    vicino. Restituisce etichette, centroidi e inertia della soluzione migliore.
+    """
     best_labels = None
     best_centers = None
     best_inertia = float("inf")
     rng = np.random.default_rng(random_state)
 
     for _ in range(n_init):
+        # Inizializzazione casuale dei centroidi, ripetuta per ridurre soluzioni deboli.
         center_indexes = rng.choice(len(data), size=n_clusters, replace=False)
         centers = data[center_indexes].copy()
 
         for _ in range(max_iter):
+            # Assegna ogni gioco al centroide piu vicino.
             distances = np.linalg.norm(data[:, None, :] - centers[None, :, :], axis=2)
             labels = distances.argmin(axis=1)
 
@@ -83,6 +106,7 @@ def fallback_kmeans(
             for cluster_id in range(n_clusters):
                 members = data[labels == cluster_id]
                 if len(members) > 0:
+                    # Il nuovo centroide e la media dei punti assegnati al cluster.
                     new_centers[cluster_id] = members.mean(axis=0)
 
             if np.allclose(centers, new_centers):
@@ -99,7 +123,12 @@ def fallback_kmeans(
 
 
 def run_kmeans(data: np.ndarray, n_clusters: int) -> tuple[np.ndarray, np.ndarray, float]:
-    """Run KMeans with scikit-learn when installed, otherwise use the fallback."""
+    """Esegue KMeans scegliendo automaticamente l'implementazione disponibile.
+
+    Se `scikit-learn` e installato viene usato `KMeans`; altrimenti viene usato il
+    fallback locale. In entrambi i casi l'interfaccia restituisce etichette,
+    centroidi e inertia.
+    """
     if KMeans is not None:
         model = KMeans(
             n_clusters=n_clusters,
@@ -114,7 +143,11 @@ def run_kmeans(data: np.ndarray, n_clusters: int) -> tuple[np.ndarray, np.ndarra
 
 
 def run_elbow_method(data: np.ndarray) -> pd.DataFrame:
-    """Compute inertia for the configured K range."""
+    """Calcola i valori dell'Elbow Method per il range di K configurato.
+
+    Per ogni K esegue KMeans e salva l'inertia. Il DataFrame prodotto viene poi
+    esportato in CSV e usato per motivare la scelta del numero di cluster.
+    """
     rows = []
     for k in KMEANS_K_RANGE:
         _, _, inertia = run_kmeans(data, n_clusters=k)
@@ -123,7 +156,11 @@ def run_elbow_method(data: np.ndarray) -> pd.DataFrame:
 
 
 def save_elbow_plot(elbow_df: pd.DataFrame) -> None:
-    """Save an Elbow Method plot when matplotlib is available."""
+    """Genera e salva il grafico dell'Elbow Method.
+
+    Se `matplotlib` non e installato, la funzione termina senza errore: il CSV con i
+    valori resta comunque disponibile e sufficiente per documentare il risultato.
+    """
     if plt is None:
         return
 
@@ -146,7 +183,12 @@ def attach_cluster_labels(
     discretized_df: pd.DataFrame,
     labels: np.ndarray,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Add the selected cluster labels to every processed dataset."""
+    """Copia la colonna `Cluster_Label` nei tre dataset processati.
+
+    In questo modo la stessa etichetta prodotta dal KMeans e disponibile in scala
+    originale, normalizzata e discretizzata. Le fasi successive possono quindi usare
+    il formato piu adatto senza riallineare manualmente le righe.
+    """
     clean_clustered = clean_df.copy()
     normalized_clustered = normalized_df.copy()
     discretized_clustered = discretized_df.copy()
@@ -159,7 +201,12 @@ def attach_cluster_labels(
 
 
 def build_cluster_summary(clean_clustered: pd.DataFrame) -> pd.DataFrame:
-    """Summarize clusters on original-scale features for interpretation."""
+    """Crea una tabella descrittiva dei cluster in scala originale.
+
+    La tabella include numerosita, prezzo medio, review score medio, recensioni
+    mediane, playtime, lingue e genere piu frequente. Serve a dare un significato
+    commerciale agli ID numerici prodotti da KMeans.
+    """
     summary = (
         clean_clustered.groupby(TARGET_CLUSTER_COLUMN)
         .agg(
@@ -178,10 +225,15 @@ def build_cluster_summary(clean_clustered: pd.DataFrame) -> pd.DataFrame:
 
 
 def run_clustering() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Run Elbow Method, selected KMeans and save clustered datasets."""
+    """Esegue tutta la fase di clustering e salva gli output.
+
+    Applica l'Elbow Method, esegue KMeans con `SELECTED_K`, aggiunge `Cluster_Label`
+    ai dataset processati e produce la tabella riassuntiva dei cluster.
+    """
     clean_df, normalized_df, discretized_df = load_processed_datasets()
     validate_clustering_features(normalized_df)
 
+    # Il clustering usa dati normalizzati per evitare dominanza delle feature piu grandi.
     data = normalized_df[CLUSTERING_FEATURES].to_numpy(dtype=float)
     elbow_df = run_elbow_method(data)
     labels, _, _ = run_kmeans(data, n_clusters=SELECTED_K)

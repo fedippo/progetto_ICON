@@ -1,4 +1,4 @@
-"""Supervised learning evaluation for cluster prediction."""
+"""Valutazione supervisionata per predire il cluster commerciale."""
 
 from __future__ import annotations
 
@@ -20,7 +20,12 @@ from config import (
 
 
 def import_ml_dependencies():
-    """Import ML libraries lazily to keep the module inspectable without installs."""
+    """Importa le librerie ML solo quando viene eseguita la valutazione.
+
+    Questo rende il file leggibile anche in ambienti in cui le dipendenze non sono
+    ancora installate. La funzione restituisce un dizionario con classi e funzioni
+    usate dagli altri blocchi dello script.
+    """
     try:
         from imblearn.over_sampling import SMOTE
         from imblearn.pipeline import Pipeline as ImbPipeline
@@ -56,7 +61,11 @@ def import_ml_dependencies():
 
 
 def load_clustered_dataset() -> pd.DataFrame:
-    """Load the normalized dataset enriched with KMeans labels."""
+    """Carica il dataset normalizzato con la colonna `Cluster_Label`.
+
+    Questo e il dataset usato dai modelli supervisionati: le feature sono gia
+    scalate e il target e stato prodotto nella fase di clustering.
+    """
     data_path = Path(CLUSTERED_NORMALIZED_DATA_PATH)
     if not data_path.exists():
         raise FileNotFoundError(
@@ -66,7 +75,11 @@ def load_clustered_dataset() -> pd.DataFrame:
 
 
 def split_features_target(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-    """Build X and y for supervised learning."""
+    """Separa le feature supervisionate dal target da predire.
+
+    Verifica prima che tutte le colonne attese siano presenti. Restituisce `X`, con
+    le feature definite in configurazione, e `y`, cioe la colonna `Cluster_Label`.
+    """
     missing = [
         column
         for column in SUPERVISED_FEATURES + [TARGET_CLUSTER_COLUMN]
@@ -81,7 +94,11 @@ def split_features_target(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
 
 
 def save_class_distribution(y: pd.Series) -> pd.DataFrame:
-    """Save absolute and relative target class distribution."""
+    """Calcola e salva la distribuzione delle classi target.
+
+    La tabella prodotta serve a capire se i cluster sono sbilanciati e quindi se ha
+    senso confrontare i modelli anche con SMOTE.
+    """
     distribution = (
         y.value_counts()
         .sort_index()
@@ -95,10 +112,16 @@ def save_class_distribution(y: pd.Series) -> pd.DataFrame:
 
 
 def build_preprocessor(ml, x: pd.DataFrame):
-    """Encode the categorical genre feature and pass numeric columns through."""
+    """Costruisce il preprocessing da applicare dentro la pipeline ML.
+
+    `Primary_Genre` viene codificato con one-hot encoding, mentre le feature gia
+    numeriche passano senza ulteriori trasformazioni. Il preprocessing resta dentro
+    la pipeline per essere applicato correttamente in ogni fold della CV.
+    """
     categorical_columns = ["Primary_Genre"]
     numeric_columns = [column for column in x.columns if column not in categorical_columns]
 
+    # OneHotEncoder e dentro la pipeline per evitare trasformazioni fuori CV.
     return ml["ColumnTransformer"](
         transformers=[
             (
@@ -112,10 +135,16 @@ def build_preprocessor(ml, x: pd.DataFrame):
 
 
 def build_model_specs(ml, preprocessor):
-    """Define models, compact grids and SMOTE variants."""
+    """Definisce le configurazioni sperimentali dei modelli.
+
+    Per ogni modello vengono create due varianti: una standard e una con SMOTE. Le
+    griglie di iperparametri sono compatte per mantenere il progetto eseguibile nel
+    vincolo temporale, ma coprono i parametri piu rilevanti.
+    """
     random_forest = ml["RandomForestClassifier"](random_state=RANDOM_STATE)
     svm = ml["SVC"](random_state=RANDOM_STATE)
 
+    # Ogni modello viene valutato sia senza SMOTE sia con SMOTE nel training fold.
     return [
         {
             "name": "RandomForest",
@@ -173,7 +202,12 @@ def build_model_specs(ml, preprocessor):
 
 
 def build_scoring(ml) -> dict:
-    """Create the scoring dictionary required by GridSearchCV."""
+    """Crea il dizionario delle metriche usate da GridSearchCV.
+
+    Oltre all'accuracy vengono usate precision, recall e F1 macro. Le metriche
+    macro pesano ogni classe allo stesso modo e sono quindi adatte quando i cluster
+    non hanno la stessa numerosita.
+    """
     return {
         "accuracy": "accuracy",
         "precision_macro": ml["make_scorer"](
@@ -189,7 +223,12 @@ def build_scoring(ml) -> dict:
 
 
 def summarize_search_results(search, model_name: str, use_smote: bool) -> dict:
-    """Extract mean and standard deviation for the best F1-macro model."""
+    """Estrae i risultati mediati della migliore configurazione.
+
+    GridSearchCV valuta molte combinazioni di iperparametri. Questa funzione prende
+    la combinazione scelta tramite F1 macro e raccoglie media e deviazione standard
+    di tutte le metriche, cosi la relazione non dipende da un singolo run.
+    """
     best_index = search.best_index_
     row = search.cv_results_
 
@@ -208,7 +247,12 @@ def summarize_search_results(search, model_name: str, use_smote: bool) -> dict:
 
 
 def run_supervised_learning() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Run model comparison with repeated stratified cross-validation."""
+    """Esegue l'intera fase supervisionata e salva risultati e parametri.
+
+    Carica il dataset clusterizzato, prepara feature e target, imposta
+    RepeatedStratifiedKFold, valuta Random Forest e SVM con/senza SMOTE e salva le
+    tabelle finali nella cartella `results`.
+    """
     ml = import_ml_dependencies()
 
     df = load_clustered_dataset()
@@ -227,11 +271,13 @@ def run_supervised_learning() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
     parameter_rows = []
 
     for spec in build_model_specs(ml, preprocessor):
+        # La pipeline impedisce data leakage: preprocessing e SMOTE restano dentro la CV.
         pipeline = spec["pipeline_cls"](steps=spec["steps"])
         search = ml["GridSearchCV"](
             estimator=pipeline,
             param_grid=spec["param_grid"],
             scoring=scoring,
+            # Il refit usa F1 macro per privilegiare il bilanciamento tra classi.
             refit="f1_macro",
             cv=cv,
             n_jobs=-1,

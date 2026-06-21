@@ -270,21 +270,21 @@ Per questo motivo ogni modello viene valutato anche con SMOTE. SMOTE e inserito 
 
 | Modello | SMOTE | Accuracy | Precision macro | Recall macro | F1 macro |
 |---|---|---:|---:|---:|---:|
-| Random Forest | No | 0.9953 +/- 0.0023 | 0.9946 +/- 0.0025 | 0.9913 +/- 0.0048 | 0.9929 +/- 0.0036 |
-| Random Forest | Si | 0.9979 +/- 0.0011 | 0.9969 +/- 0.0017 | 0.9971 +/- 0.0017 | 0.9970 +/- 0.0015 |
-| SVM | No | 0.9887 +/- 0.0029 | 0.9890 +/- 0.0027 | 0.9851 +/- 0.0044 | 0.9870 +/- 0.0034 |
-| SVM | Si | 0.9875 +/- 0.0032 | 0.9825 +/- 0.0044 | 0.9887 +/- 0.0030 | 0.9855 +/- 0.0036 |
+| Random Forest | No | 0.9979 +/- 0.0016 | 0.9973 +/- 0.0020 | 0.9969 +/- 0.0028 | 0.9971 +/- 0.0023 |
+| Random Forest | Si | 0.9983 +/- 0.0009 | 0.9974 +/- 0.0015 | 0.9980 +/- 0.0014 | 0.9977 +/- 0.0014 |
+| SVM | No | 0.9895 +/- 0.0022 | 0.9897 +/- 0.0022 | 0.9859 +/- 0.0037 | 0.9877 +/- 0.0028 |
+| SVM | Si | 0.9890 +/- 0.0034 | 0.9841 +/- 0.0049 | 0.9901 +/- 0.0031 | 0.9870 +/- 0.0040 |
 
 Migliori parametri trovati:
 
 | Modello | SMOTE | Parametri migliori |
 |---|---|---|
 | Random Forest | No | `max_depth=None`, `min_samples_leaf=1`, `n_estimators=200` |
-| Random Forest | Si | `max_depth=None`, `min_samples_leaf=1`, `n_estimators=200` |
+| Random Forest | Si | `max_depth=None`, `min_samples_leaf=3`, `n_estimators=100` |
 | SVM | No | `C=10`, `gamma=scale`, `kernel=linear` |
 | SVM | Si | `C=10`, `gamma=scale`, `kernel=linear` |
 
-La Random Forest con SMOTE ottiene il miglior F1 macro, pari a 0.9970 +/- 0.0015. Il miglioramento rispetto alla versione senza SMOTE riguarda sia il valore medio sia la deviazione standard. Questo indica che il bilanciamento aiuta il modello a essere piu stabile sui diversi fold.
+La Random Forest con SMOTE ottiene il miglior F1 macro, pari a 0.9977 +/- 0.0014. Il miglioramento rispetto alla versione senza SMOTE riguarda sia il valore medio sia la deviazione standard. Questo indica che il bilanciamento aiuta il modello a essere piu stabile sui diversi fold.
 
 Per SVM, invece, SMOTE non porta un miglioramento complessivo: la recall macro aumenta, ma precision macro e F1 macro diminuiscono. La versione SVM senza SMOTE e quindi preferibile alla versione con SMOTE, ma resta inferiore alla Random Forest.
 
