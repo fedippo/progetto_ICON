@@ -1,4 +1,9 @@
-"""Valutazione supervisionata per predire il cluster commerciale."""
+"""Valutazione supervisionata per predire il cluster commerciale.
+
+Questo modulo addestra modelli di Machine Learning (Random Forest e SVM) per classificare
+i giochi nei cluster precedentemente individuati. Valuta anche l'efficacia del
+sovracampionamento (SMOTE) per gestire eventuali sbilanciamenti tra le dimensioni dei cluster.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 from config import (
+    CATEGORICAL_FEATURES,
     CLASS_DISTRIBUTION_PATH,
     CLUSTERED_NORMALIZED_DATA_PATH,
     CV_REPEATS,
@@ -20,11 +26,14 @@ from config import (
 
 
 def import_ml_dependencies():
-    """Importa le librerie ML solo quando viene eseguita la valutazione.
+    """Importa dinamicamente le dipendenze pesanti di Machine Learning.
 
-    Questo rende il file leggibile anche in ambienti in cui le dipendenze non sono
-    ancora installate. La funzione restituisce un dizionario con classi e funzioni
-    usate dagli altri blocchi dello script.
+    Perché farlo in una funzione:
+    Scikit-learn e imbalanced-learn sono librerie voluminose. Importarle a livello globale
+    rallenterebbe l'avvio dello script se si volesse solo ispezionare il modulo o eseguirne
+    funzioni minori. Inoltre, questo blocco 'try-except' centralizzato restituisce un
+    dizionario di dipendenze, garantendo un messaggio di errore chiaro e bloccante se
+    l'ambiente Python non è configurato correttamente.
     """
     try:
         from imblearn.over_sampling import SMOTE
@@ -61,10 +70,12 @@ def import_ml_dependencies():
 
 
 def load_clustered_dataset() -> pd.DataFrame:
-    """Carica il dataset normalizzato con la colonna `Cluster_Label`.
+    """Carica il dataset preparato per i modelli supervisionati.
 
-    Questo e il dataset usato dai modelli supervisionati: le feature sono gia
-    scalate e il target e stato prodotto nella fase di clustering.
+    Si utilizza specificamente la versione 'Normalized' generata in fase di preprocessing
+    e arricchita con la label in fase di clustering. La normalizzazione è strettamente
+    necessaria per l'algoritmo SVM (Support Vector Machine), che si basa sul calcolo delle
+    distanze spaziali (margini) per tracciare gli iperpiani di separazione tra le classi.
     """
     data_path = Path(CLUSTERED_NORMALIZED_DATA_PATH)
     if not data_path.exists():
@@ -75,10 +86,11 @@ def load_clustered_dataset() -> pd.DataFrame:
 
 
 def split_features_target(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-    """Separa le feature supervisionate dal target da predire.
+    """Isola le variabili indipendenti (X) dalla variabile dipendente/target (y).
 
-    Verifica prima che tutte le colonne attese siano presenti. Restituisce `X`, con
-    le feature definite in configurazione, e `y`, cioe la colonna `Cluster_Label`.
+    Esegue prima una validazione di integrità: verifica che tutte le colonne indicate
+    in `SUPERVISED_FEATURES` e il `TARGET_CLUSTER_COLUMN` siano effettivamente presenti
+    nel DataFrame. In caso contrario, solleva un'eccezione preventiva.
     """
     missing = [
         column
@@ -94,10 +106,13 @@ def split_features_target(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
 
 
 def save_class_distribution(y: pd.Series) -> pd.DataFrame:
-    """Calcola e salva la distribuzione delle classi target.
+    """Calcola la numerosità di ciascun cluster per evidenziare sbilanciamenti.
 
-    La tabella prodotta serve a capire se i cluster sono sbilanciati e quindi se ha
-    senso confrontare i modelli anche con SMOTE.
+    Logica analitica:
+    L'algoritmo KMeans non garantisce che i cluster abbiano la stessa dimensione.
+    Questa funzione calcola il conteggio assoluto ('Count') e la percentuale relativa ('Share')
+    di ogni classe. Salvare questo dato è cruciale per la relazione finale, poiché
+    giustifica l'utilizzo di metriche 'Macro' e l'introduzione di SMOTE.
     """
     distribution = (
         y.value_counts()
@@ -112,22 +127,25 @@ def save_class_distribution(y: pd.Series) -> pd.DataFrame:
 
 
 def build_preprocessor(ml, x: pd.DataFrame):
-    """Costruisce il preprocessing da applicare dentro la pipeline ML.
+    """Costruisce il trasformatore di colonne per le feature miste.
 
-    `Primary_Genre` viene codificato con one-hot encoding, mentre le feature gia
-    numeriche passano senza ulteriori trasformazioni. Il preprocessing resta dentro
-    la pipeline per essere applicato correttamente in ogni fold della CV.
+    Logica di Encoding:
+    I modelli matematici non sanno leggere stringhe come 'Action' o 'RPG'.
+    - `Primary_Genre`: Viene trasformato usando il 'OneHotEncoder'. Vengono create N colonne
+      binarie indipendenti (una per ogni genere), evitando di introdurre relazioni ordinali fittizie
+      (es. RPG=1, Action=2 non significa che Action > RPG).
+    - `Multiplayer`: Essendo già una variabile binaria (0/1), viene bypassata ('passthrough')
+      insieme alle restanti feature numeriche per evitare trasformazioni ridondanti.
     """
-    categorical_columns = ["Primary_Genre"]
-    numeric_columns = [column for column in x.columns if column not in categorical_columns]
+    one_hot_columns = [column for column in CATEGORICAL_FEATURES if column != "Multiplayer"]
+    numeric_columns = [column for column in x.columns if column not in one_hot_columns]
 
-    # OneHotEncoder e dentro la pipeline per evitare trasformazioni fuori CV.
     return ml["ColumnTransformer"](
         transformers=[
             (
                 "genre",
                 ml["OneHotEncoder"](handle_unknown="ignore"),
-                categorical_columns,
+                one_hot_columns,
             ),
             ("numeric", "passthrough", numeric_columns),
         ]
@@ -135,11 +153,18 @@ def build_preprocessor(ml, x: pd.DataFrame):
 
 
 def build_model_specs(ml, preprocessor):
-    """Definisce le configurazioni sperimentali dei modelli.
+    """Progetta gli esperimenti: definisce modelli, iperparametri e architetture di pipeline.
 
-    Per ogni modello vengono create due varianti: una standard e una con SMOTE. Le
-    griglie di iperparametri sono compatte per mantenere il progetto eseguibile nel
-    vincolo temporale, ma coprono i parametri piu rilevanti.
+    Strategia metodologica:
+    Vengono testati due algoritmi diversi per approccio (Ensemble vs Margine Spaziale):
+    - Random Forest: Robusto, gestisce bene relazioni non lineari.
+    - SVM: Sensibile alla normalizzazione, eccellente nei confini decisionali complessi.
+
+    Prevenzione del Data Leakage:
+    Quando si usa SMOTE (creazione di dati sintetici), è fondamentale generare questi
+    nuovi record SOLO sul set di addestramento (Train fold) e mai sul set di test (Validation fold).
+    L'uso di `ImbPipeline` (da imbalanced-learn) garantisce matematicamente che lo SMOTE
+    venga applicato unicamente durante la fase di '.fit()', mantenendo il test set immacolato.
     """
     random_forest = ml["RandomForestClassifier"](random_state=RANDOM_STATE)
     svm = ml["SVC"](random_state=RANDOM_STATE)
@@ -202,11 +227,15 @@ def build_model_specs(ml, preprocessor):
 
 
 def build_scoring(ml) -> dict:
-    """Crea il dizionario delle metriche usate da GridSearchCV.
+    """Configura l'arsenale di metriche di valutazione per il modello.
 
-    Oltre all'accuracy vengono usate precision, recall e F1 macro. Le metriche
-    macro pesano ogni classe allo stesso modo e sono quindi adatte quando i cluster
-    non hanno la stessa numerosita.
+    Scelta delle metriche:
+    In presenza di cluster di dimensioni diverse, la semplice Accuracy è ingannevole
+    (predire sempre il cluster maggiore fornirebbe un punteggio alto ma inutile).
+    Si utilizzano le metriche 'Macro', che calcolano il punteggio (Precision/Recall/F1)
+    per ogni singola classe separatamente e ne fanno poi la media non pesata.
+    In questo modo, classificare correttamente il cluster più piccolo è importante
+    tanto quanto classificare quello più grande.
     """
     return {
         "accuracy": "accuracy",
@@ -223,11 +252,13 @@ def build_scoring(ml) -> dict:
 
 
 def summarize_search_results(search, model_name: str, use_smote: bool) -> dict:
-    """Estrae i risultati mediati della migliore configurazione.
+    """Consolida i risultati della Cross-Validation per il modello migliore.
 
-    GridSearchCV valuta molte combinazioni di iperparametri. Questa funzione prende
-    la combinazione scelta tramite F1 macro e raccoglie media e deviazione standard
-    di tutte le metriche, cosi la relazione non dipende da un singolo run.
+    Dopo l'esplorazione esaustiva della griglia da parte di GridSearchCV, questa funzione
+    intercetta la combinazione di iperparametri considerata ottimale. Estrae la media
+    e la deviazione standard (std) calcolata sui vari fold di validazione per ciascuna metrica.
+    La deviazione standard è importante perché indica quanto il modello è stabile
+    su porzioni di dati differenti.
     """
     best_index = search.best_index_
     row = search.cv_results_
@@ -247,11 +278,18 @@ def summarize_search_results(search, model_name: str, use_smote: bool) -> dict:
 
 
 def run_supervised_learning() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Esegue l'intera fase supervisionata e salva risultati e parametri.
+    """Motore esecutivo (Entry Point) della fase supervisionata.
 
-    Carica il dataset clusterizzato, prepara feature e target, imposta
-    RepeatedStratifiedKFold, valuta Random Forest e SVM con/senza SMOTE e salva le
-    tabelle finali nella cartella `results`.
+    Orchestra l'intero esperimento in modo riproducibile:
+    1. Importa le librerie e carica il dataset normalizzato.
+    2. Registra la distribuzione nativa dei cluster.
+    3. Imposta la "Repeated Stratified K-Fold Cross Validation": una validazione rigorosa
+       che mantiene costante la percentuale delle classi in ogni suddivisione e ripete il
+       processo più volte per annullare fluttuazioni statistiche.
+    4. Sottopone tutti i modelli configurati in `build_model_specs` a ottimizzazione
+       tramite GridSearch, utilizzando l'F1 Macro come criterio definitivo ('refit')
+       per eleggere la variante vincente.
+    5. Esporta un report CSV dettagliato con metriche e migliori parametri per la stesura della relazione.
     """
     ml = import_ml_dependencies()
 
@@ -271,13 +309,11 @@ def run_supervised_learning() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
     parameter_rows = []
 
     for spec in build_model_specs(ml, preprocessor):
-        # La pipeline impedisce data leakage: preprocessing e SMOTE restano dentro la CV.
         pipeline = spec["pipeline_cls"](steps=spec["steps"])
         search = ml["GridSearchCV"](
             estimator=pipeline,
             param_grid=spec["param_grid"],
             scoring=scoring,
-            # Il refit usa F1 macro per privilegiare il bilanciamento tra classi.
             refit="f1_macro",
             cv=cv,
             n_jobs=-1,

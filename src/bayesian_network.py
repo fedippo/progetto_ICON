@@ -1,59 +1,59 @@
 """Apprendimento e inferenza di una rete bayesiana per il rischio commerciale."""
 
 from __future__ import annotations
-
 from pathlib import Path
-
 import pandas as pd
-
 from config import (
     BAYESIAN_EDGES_PATH,
     BAYESIAN_FEATURES,
     BAYESIAN_MAX_INDEGREE,
     BAYESIAN_QUERIES_PATH,
     CLUSTERED_DISCRETIZED_DATA_PATH,
-    RANDOM_STATE,
     TARGET_CLUSTER_COLUMN,
 )
 
-
 def import_pgmpy_dependencies():
-    """Importa pgmpy gestendo differenze tra versioni della libreria.
+    """Importa pgmpy gestendo le differenze architetturali tra le varie versioni della libreria.
 
-    Alcune versioni usano `BayesianNetwork`, altre `DiscreteBayesianNetwork`; anche
-    gli estimatori dei parametri hanno API diverse. La funzione isola queste
-    differenze e restituisce un dizionario uniforme usato dal resto dello script.
+    Il modulo esegue una serie di blocchi try-except per garantire la compatibilità sia con
+    le versioni più vecchie di pgmpy sia con quelle più recenti. In particolare:
+    - Recupera 'BicScore' o 'BIC' per la valutazione della struttura.
+    - Cerca 'DiscreteBayesianNetwork' (introdotto nelle nuove API) facendo fallback su 'BayesianModel'.
+    - Risolve la posizione di 'DiscreteMLE', che è stata spostata tra i moduli 'estimators'
+      e 'parameter_estimator' nel corso dello sviluppo della libreria.
+
+    Restituisce un dizionario contenente le classi necessarie, isolando il resto dello script
+    dai breaking changes di pgmpy.
     """
     try:
-        from pgmpy.estimators import BicScore, HillClimbSearch, MaximumLikelihoodEstimator
-        from pgmpy.inference import VariableElimination
-        try:
-            # Nelle versioni recenti BayesianNetwork e deprecato.
-            from pgmpy.models import DiscreteBayesianNetwork as BayesianModel
-        except ImportError:
-            from pgmpy.models import BayesianNetwork as BayesianModel
-        try:
-            # Nuova API per stimare CPD discrete.
-            from pgmpy.parameter_estimator import DiscreteMLE
-        except ImportError:
-            DiscreteMLE = None
+        import pgmpy
+    except ImportError as exc:
+        raise ModuleNotFoundError(
+            "Missing pgmpy dependency. Install requirements.txt before running this script."
+        ) from exc
+
+    # BicScore si chiamava BIC nelle versioni piu vecchie di pgmpy.
+    try:
+        from pgmpy.estimators import BicScore
+    except ImportError:
+        from pgmpy.estimators import BIC as BicScore
+
+    from pgmpy.estimators import HillClimbSearch, MaximumLikelihoodEstimator
+    from pgmpy.inference import VariableElimination
+
+    try:
+        from pgmpy.models import DiscreteBayesianNetwork as BayesianModel
+    except ImportError:
+        from pgmpy.models import BayesianNetwork as BayesianModel
+
+    # NUOVA GESTIONE IMPORT: cerca DiscreteMLE anche nel nuovo modulo parameter_estimator
+    try:
+        from pgmpy.parameter_estimator import DiscreteMLE
     except ImportError:
         try:
-            from pgmpy.estimators import BIC as BicScore
-            from pgmpy.estimators import HillClimbSearch, MaximumLikelihoodEstimator
-            from pgmpy.inference import VariableElimination
-            try:
-                from pgmpy.models import DiscreteBayesianNetwork as BayesianModel
-            except ImportError:
-                from pgmpy.models import BayesianNetwork as BayesianModel
-            try:
-                from pgmpy.parameter_estimator import DiscreteMLE
-            except ImportError:
-                DiscreteMLE = None
-        except ImportError as exc:
-            raise ModuleNotFoundError(
-                "Missing pgmpy dependency. Install requirements.txt before running this script."
-            ) from exc
+            from pgmpy.estimators import DiscreteMLE
+        except ImportError:
+            DiscreteMLE = None
 
     return {
         "BayesianModel": BayesianModel,
@@ -66,11 +66,15 @@ def import_pgmpy_dependencies():
 
 
 def load_bayesian_dataset() -> pd.DataFrame:
-    """Carica il dataset adatto alla rete bayesiana.
+    """Carica e prepara il dataset per l'addestramento della rete bayesiana.
 
-    Usa il dataset discretizzato e gia arricchito con `Cluster_Label`. Controlla che
-    tutte le variabili previste siano presenti e converte ogni colonna in interi,
-    per rappresentare stati discreti.
+    Il funzionamento prevede:
+    1. La verifica dell'esistenza del file discretizzato e clusterizzato generato dai task precedenti.
+    2. Il controllo formale che tutte le colonne definite in 'BAYESIAN_FEATURES' siano presenti,
+       sollevando un errore in caso contrario per evitare fallimenti silenziosi.
+    3. Il casting forzato di tutte le feature a interi (int). Questo passaggio è cruciale
+       perché i modelli bayesiani discreti di pgmpy richiedono che gli stati siano
+       rappresentati da numeri interi (es. 0, 1, 2) e non da float o stringhe.
     """
     data_path = Path(CLUSTERED_DISCRETIZED_DATA_PATH)
     if not data_path.exists():
@@ -92,11 +96,17 @@ def load_bayesian_dataset() -> pd.DataFrame:
 
 
 def learn_structure(df: pd.DataFrame, pgmpy):
-    """Apprende automaticamente la struttura della rete bayesiana.
+    """Apprende automaticamente la topologia (Directed Acyclic Graph) della rete bayesiana dai dati.
 
-    HillClimbSearch esplora strutture candidate e il punteggio BIC penalizza reti
-    troppo complesse. `BAYESIAN_MAX_INDEGREE` limita il numero massimo di genitori
-    per nodo, rendendo le CPD piu leggibili e meno costose.
+    Funzionamento dell'algoritmo:
+    - Utilizza 'HillClimbSearch', un algoritmo di ricerca euristica che parte da un grafo vuoto
+      e iterativamente aggiunge, rimuove o inverte un arco alla volta per trovare la struttura migliore.
+    - Valuta la bontà delle strutture candidate usando il 'BicScore' (Bayesian Information Criterion).
+      Il BIC premia la capacità della rete di spiegare i dati (likelihood) ma penalizza
+      fortemente la complessità del modello (troppi archi), prevenendo l'overfitting.
+    - Impone il limite 'BAYESIAN_MAX_INDEGREE' per restringere il numero massimo di nodi "genitore"
+      che un nodo "figlio" può avere. Questo mantiene le Tabelle di Probabilità Condizionata (CPD)
+      piccole, calcolabili rapidamente e facilmente interpretabili in ambito business.
     """
     search = pgmpy["HillClimbSearch"](df)
     try:
@@ -113,28 +123,35 @@ def learn_structure(df: pd.DataFrame, pgmpy):
 
 
 def fit_model(df: pd.DataFrame, structure, pgmpy):
-    """Stima le tabelle di probabilita condizionata della rete.
+    """Stima le Tabelle di Probabilità Condizionata (CPD) della rete bayesiana.
 
-    A partire dalla struttura appresa, il modello calcola le CPD sui dati
-    discretizzati. Alla fine `check_model` verifica che la rete sia formalmente
-    consistente prima di procedere con le query.
+    Dopo aver definito la struttura (gli archi), questa funzione calcola le probabilità.
+    Utilizza la Stima di Massima Verosimiglianza (MLE - Maximum Likelihood Estimation),
+    che conta semplicemente le frequenze relative degli stati nel dataset.
+    Ad esempio, conta quante volte un gioco appartiene al cluster X dato che il suo prezzo è Y.
+    Infine, chiama 'check_model()' per validare matematicamente la rete (assicurandosi
+    che le probabilità in ogni CPD sommino esattamente a 1).
     """
     model = pgmpy["BayesianModel"](structure.edges())
+
     if pgmpy["DiscreteMLE"] is not None:
-        # API recente: fit richiede un estimatore discreto gia inizializzato.
+        # API recente: fit richiede un estimatore discreto inizializzato (con le parentesi tonde vuote)
         model.fit(df, estimator=pgmpy["DiscreteMLE"]())
     else:
-        # API precedente: fit accetta la classe MaximumLikelihoodEstimator.
+        # API precedente: fit accetta la classe MaximumLikelihoodEstimator (senza parentesi)
         model.fit(df, estimator=pgmpy["MaximumLikelihoodEstimator"])
+
     model.check_model()
     return model
 
 
 def save_edges(model) -> pd.DataFrame:
-    """Esporta gli archi della rete appresa in un CSV.
+    """Estrae ed esporta la lista degli archi (relazioni causali/condizionali) della rete.
 
-    Questo output serve per documentare le dipendenze trovate dall'algoritmo e per
-    commentarle nella relazione senza dover visualizzare direttamente il grafo.
+    Converte l'oggetto 'edges()' del modello pgmpy (una lista di tuple) in un DataFrame Pandas
+    con colonne "Source" e "Target", per poi salvarlo in un file CSV. Questo è utile
+    per documentare quali variabili influenzano altre variabili senza dover ricorrere
+    alla visualizzazione grafica del DAG.
     """
     edges_df = pd.DataFrame(list(model.edges()), columns=["Source", "Target"])
     Path(BAYESIAN_EDGES_PATH).parent.mkdir(parents=True, exist_ok=True)
@@ -143,19 +160,19 @@ def save_edges(model) -> pd.DataFrame:
 
 
 def most_common_state(df: pd.DataFrame, column: str) -> int:
-    """Restituisce lo stato discreto piu frequente di una variabile.
+    """Identifica lo stato discreto (bin) più frequente per una data variabile.
 
-    Viene usato per costruire query dimostrative realistiche, scegliendo un valore
-    osservato spesso nel dataset.
+    Usa il metodo 'mode()' di pandas per estrarre la moda statistica.
+    Viene impiegato per creare scenari di inferenza "tipici" o di base (baseline).
     """
     return int(df[column].mode().iloc[0])
 
 
 def highest_state(df: pd.DataFrame, column: str) -> int:
-    """Restituisce lo stato discreto massimo osservato.
+    """Identifica lo stato discreto di valore numerico minimo per una data variabile.
 
-    Per le variabili discretizzate del progetto corrisponde in genere allo stato
-    'alto', ad esempio prezzo alto o playtime alto.
+    Come per 'highest_state', estrae il minimo (min) per automatizzare la costruzione
+    di query probabilistiche su scenari limite inferiori (es. "Prezzo molto basso").
     """
     return int(df[column].max())
 
@@ -170,11 +187,12 @@ def lowest_state(df: pd.DataFrame, column: str) -> int:
 
 
 def query_cluster_distribution(inference, evidence: dict) -> list[dict]:
-    """Calcola la distribuzione del cluster dato uno scenario osservato.
+    """Esegue l'inferenza esatta per calcolare la probabilità di appartenenza ai cluster.
 
-    L'evidenza rappresenta informazioni disponibili prima della pubblicazione, come
-    genere o prezzo. Il risultato indica quale profilo commerciale risulta piu
-    probabile secondo la rete bayesiana.
+    Il metodo utilizza l'algoritmo di Eliminazione delle Variabili ('VariableElimination')
+    per calcolare la distribuzione marginale della variabile target ('Cluster_Label')
+    condizionata all'evidenza fornita (un dizionario di variabili osservate, es. genere e prezzo).
+    Formatta poi il risultato in una lista di dizionari facilmente convertibile in DataFrame.
     """
     result = inference.query(
         variables=[TARGET_CLUSTER_COLUMN],
@@ -196,11 +214,12 @@ def query_cluster_distribution(inference, evidence: dict) -> list[dict]:
 
 
 def query_low_review_risk(inference, evidence: dict) -> list[dict]:
-    """Calcola la distribuzione del review score dato uno scenario osservato.
+    """Esegue l'inferenza esatta per stimare il rischio di recensioni negative.
 
-    Viene usata per stimare il rischio di ricezione bassa degli utenti. In
-    particolare, uno stato 0 di `Review_Score_Pct` viene interpretato come segnale
-    di rischio commerciale.
+    Simile a 'query_cluster_distribution', ma cambia il target: interroga la rete sulla
+    variabile 'Review_Score_Pct'. L'obiettivo di business è analizzare la probabilità
+    che uno specifico scenario (es. gioco costoso e multiplayer) produca uno stato 0
+    (recensioni basse), indicando così un elevato rischio commerciale.
     """
     result = inference.query(
         variables=["Review_Score_Pct"],
@@ -222,11 +241,17 @@ def query_low_review_risk(inference, evidence: dict) -> list[dict]:
 
 
 def run_business_queries(df: pd.DataFrame, model, pgmpy) -> pd.DataFrame:
-    """Esegue le query probabilistiche usate nella relazione.
+    """Orchestra e calcola un set di scenari decisionali tramite inferenza probabilistica.
 
-    Le query sono costruite per rappresentare scenari decisionali del publisher:
-    prezzo alto, prezzo basso con durata alta, multiplayer e rischio di review
-    score basso. I risultati vengono salvati in `bayesian_queries.csv`.
+    Questo metodo:
+    1. Inizializza l'algoritmo di Eliminazione delle Variabili.
+    2. Usa i metodi di supporto (es. most_common_state, highest_state) per determinare
+       dinamicamente i valori degli stati discreti presenti nel dataset.
+    3. Formula tre casi di studio specifici per il publisher:
+       - Impatto sul cluster di un genere comune venduto a prezzo alto.
+       - Impatto sul cluster di un gioco economico ma con alta longevità.
+       - Rischio di recensioni negative per un gioco multiplayer venduto a prezzo alto.
+    4. Raccoglie tutti i risultati e li esporta in un file CSV riassuntivo.
     """
     inference = pgmpy["VariableElimination"](model)
 
@@ -263,10 +288,16 @@ def run_business_queries(df: pd.DataFrame, model, pgmpy) -> pd.DataFrame:
 
 
 def run_bayesian_network() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Esegue l'intera fase bayesiana.
+    """Entry point principale per l'intera pipeline bayesiana.
 
-    Carica i dati discretizzati, apprende la struttura, stima le CPD, salva gli
-    archi e produce le query probabilistiche usate come supporto decisionale.
+    Si occupa di coordinare in sequenza logica l'intero processo:
+    1. Importazione sicura delle librerie.
+    2. Caricamento del dataset.
+    3. Apprendimento della struttura (archi).
+    4. Addestramento dei parametri (CPD).
+    5. Salvataggio della topologia su disco.
+    6. Esecuzione e salvataggio delle query di business.
+    Restituisce i DataFrame degli archi e delle query per log e ispezioni.
     """
     pgmpy = import_pgmpy_dependencies()
     df = load_bayesian_dataset()

@@ -1,4 +1,10 @@
-"""Integrazione Python-Prolog per le decisioni di finanziamento del publisher."""
+"""Integrazione Python-Prolog per le decisioni di finanziamento del publisher.
+
+Questo modulo funge da strato di governance finale:
+1. Converte i dati del dataset in fatti Prolog (`generate_prolog_facts`).
+2. Interroga la Knowledge Base (kb/publisher_rules.pl) tramite l'interfaccia `pyswip`.
+3. Estrae i verdetti decisionali (Approva/Revisione/Rifiuta) per ogni gioco.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +12,19 @@ from pathlib import Path
 
 import pandas as pd
 
-from config import PROLOG_DECISIONS_PATH, PROLOG_FACTS_PATH, PROLOG_RULES_PATH
+from config import (
+    GOOD_REVIEW_SCORE_THRESHOLD,
+    HIGH_PRICE_THRESHOLD,
+    LOW_PRICE_THRESHOLD,
+    LOW_REVIEW_SCORE_THRESHOLD,
+    MAX_GRANT_BUDGET,
+    MIN_GLOBAL_LANGUAGES,
+    MIN_PREMIUM_LANGUAGES,
+    PROLOG_DECISIONS_PATH,
+    PROLOG_FACTS_PATH,
+    PROLOG_RULES_PATH,
+    REDUCED_GRANT_BUDGET,
+)
 
 
 DEMO_GAMES = [
@@ -23,7 +41,8 @@ DEMO_GAMES = [
         "cluster": "cluster_0",
         "risk": "basso",
     },
-    # Caso intermedio: buon supporto lingue, ma review non abbastanza alta per approvazione.
+    # Caso intermedio: review sotto soglia (72 < 75) e rischio non accettabile
+    # (rischio medio con prezzo alto >= 30). Entrambe le condizioni bloccano l'approvazione;
     {
         "name": "short_puzzle_deluxe",
         "genre": "puzzle",
@@ -66,12 +85,43 @@ DEMO_GAMES = [
 
 
 def generate_prolog_facts(games: list[dict] = DEMO_GAMES) -> Path:
-    """Genera fatti Prolog ordinati a partire da record strutturati."""
+    """Genera il file di fatti dinamici utilizzato dalla Knowledge Base Prolog.
+
+    Ruolo nella pipeline:
+    Le regole decisionali del publisher sono definite staticamente nel file
+    'publisher_rules.pl', mentre i dati dei giochi cambiano ad ogni esecuzione.
+    Questa funzione realizza il collegamento tra Python e Prolog trasformando
+    i risultati prodotti dagli algoritmi di Machine Learning in fatti logici.
+
+    Funzionamento:
+    1. Crea la cartella di destinazione se non esiste.
+    2. Scrive nel file le soglie di business definite in config.py
+       (budget, lingue, prezzo e review score).
+    3. Converte ogni gioco nel predicato:
+       gioco(Nome, Genere, Prezzo, Ore, Lingue, Multiplayer, Budget, ReviewScore).
+    4. Converte il cluster previsto dal modello supervisionato nel predicato:
+       predizione_commerciale(Gioco, Cluster).
+    5. Converte la stima di rischio proveniente dalla componente probabilistica:
+       rischio_bayesiano(Gioco, LivelloRischio).
+    6. Salva il file .pl risultante e restituisce il percorso generato.
+
+    Il file prodotto costituisce la base di fatti interrogata successivamente
+    dal motore SWI-Prolog.
+    """
     facts_path = Path(PROLOG_FACTS_PATH)
     facts_path.parent.mkdir(parents=True, exist_ok=True)
 
     lines = [
-        "% File generato da src/prolog_reasoning.py. Non modificare manualmente.",
+        "% File generato da src/prolog_reasoning.py.",
+        "",
+        f"soglia_budget_standard({MAX_GRANT_BUDGET}).",
+        f"soglia_budget_ridotta({REDUCED_GRANT_BUDGET}).",
+        f"soglia_lingue_globale({MIN_GLOBAL_LANGUAGES}).",
+        f"soglia_lingue_premium({MIN_PREMIUM_LANGUAGES}).",
+        f"soglia_prezzo_alto({HIGH_PRICE_THRESHOLD}).",
+        f"soglia_prezzo_basso({LOW_PRICE_THRESHOLD}).",
+        f"soglia_review_bassa({LOW_REVIEW_SCORE_THRESHOLD}).",
+        f"soglia_review_buona({GOOD_REVIEW_SCORE_THRESHOLD}).",
         "",
     ]
 
@@ -105,7 +155,21 @@ def generate_prolog_facts(games: list[dict] = DEMO_GAMES) -> Path:
 
 
 def import_pyswip():
-    """Importa PySwip solo quando serve, perche richiede anche SWI-Prolog installato."""
+    """Importa dinamicamente l'interfaccia Python-SWI Prolog.
+
+    La libreria PySwip richiede sia il pacchetto Python 'pyswip'
+    sia una installazione funzionante di SWI-Prolog.
+
+    L'import viene eseguito solo quando necessario per evitare che
+    il semplice caricamento del modulo fallisca in ambienti dove
+    Prolog non è installato.
+
+    Restituisce:
+        Classe Prolog fornita da PySwip.
+
+    Solleva:
+        ModuleNotFoundError se PySwip o SWI-Prolog non sono disponibili.
+    """
     try:
         from pyswip import Prolog
     except ImportError as exc:
@@ -116,7 +180,21 @@ def import_pyswip():
 
 
 def consult_knowledge_base():
-    """Carica le regole Prolog e i fatti generati."""
+    """Inizializza il motore Prolog e carica la Knowledge Base completa.
+
+    Funzionamento:
+    1. Importa dinamicamente la classe Prolog tramite PySwip.
+    2. Crea una nuova istanza del motore logico SWI-Prolog.
+    3. Verifica l'esistenza dei file:
+       - publisher_rules.pl (regole statiche)
+       - generated_facts.pl (fatti dinamici)
+    4. Carica entrambi i file tramite il predicato 'consult'.
+    5. Restituisce il motore Prolog pronto per essere interrogato.
+
+    L'ordine di caricamento è importante:
+    prima vengono definite le regole generali del publisher,
+    poi i fatti specifici della sessione corrente.
+    """
     Prolog = import_pyswip()
     prolog = Prolog()
 
@@ -135,7 +213,23 @@ def consult_knowledge_base():
 
 
 def query_single_value(prolog, query: str, variable: str) -> str | None:
-    """Restituisce il primo valore associato a una variabile Prolog."""
+    """Esegue una query Prolog e restituisce il primo valore trovato.
+
+    Parametri:
+        prolog: istanza del motore SWI-Prolog.
+        query: query logica da eseguire.
+        variable: nome della variabile da estrarre.
+
+    Funzionamento:
+    - Esegue la query tramite PySwip.
+    - Converte il generatore dei risultati in una lista.
+    - Se non esistono soluzioni restituisce None.
+    - In caso contrario estrae il valore della variabile richiesta
+      dalla prima soluzione disponibile.
+
+    È utile quando la query è progettata per produrre un unico risultato,
+    come il verdetto finale associato a un gioco.
+    """
     results = list(prolog.query(query))
     if not results:
         return None
@@ -143,12 +237,39 @@ def query_single_value(prolog, query: str, variable: str) -> str | None:
 
 
 def query_all_values(prolog, query: str, variable: str) -> list[str]:
-    """Restituisce tutti i valori associati a una variabile Prolog."""
+    """Esegue una query Prolog e raccoglie tutte le soluzioni trovate.
+
+    A differenza di 'query_single_value', questa funzione non si ferma
+    alla prima soluzione ma scorre completamente il generatore prodotto
+    da PySwip.
+
+    Per ogni soluzione:
+    - estrae il valore associato alla variabile richiesta;
+    - converte il risultato in stringa;
+    - lo inserisce nella lista finale.
+
+    Viene utilizzata quando un predicato può produrre più risposte,
+    ad esempio l'elenco completo delle violazioni bloccanti associate
+    ad un progetto.
+    """
     return [str(row[variable]) for row in prolog.query(query)]
 
 
 def unique_preserving_order(values: list[str]) -> list[str]:
-    """Rimuove duplicati senza cambiare l'ordine dei risultati Prolog."""
+    """Rimuove i duplicati preservando l'ordine originale.
+
+    Le query Prolog possono generare la stessa soluzione attraverso
+    percorsi logici differenti. In questi casi è possibile ottenere
+    valori ripetuti.
+
+    La funzione:
+    1. Mantiene un insieme ('seen') dei valori già incontrati.
+    2. Scorre la lista nell'ordine originale.
+    3. Inserisce nella lista finale solo gli elementi non ancora visti.
+
+    Restituisce quindi una sequenza di valori unici senza alterare
+    l'ordine con cui sono stati generati dal motore Prolog.
+    """
     seen = set()
     unique_values = []
     for value in values:
@@ -160,7 +281,31 @@ def unique_preserving_order(values: list[str]) -> list[str]:
 
 
 def build_decision_rows(prolog) -> list[dict]:
-    """Interroga verdetti e violazioni bloccanti per ogni gioco noto."""
+    """Costruisce la tabella finale dei risultati decisionali.
+
+    Rappresenta il punto di integrazione tra il motore logico Prolog
+    e il layer analitico Python basato su Pandas.
+
+    Funzionamento:
+    1. Recupera tutti i giochi presenti nella Knowledge Base
+       interrogando il predicato 'gioco/8'.
+    2. Per ciascun gioco esegue una serie di interrogazioni:
+       - verdetto(Game, Verdetto)
+       - approva_finanziamento(Game)
+       - richiede_revisione(Game)
+       - rifiuta_finanziamento(Game)
+       - violazione_bloccante(Game, Motivo)
+    3. Elimina eventuali duplicati nelle violazioni.
+    4. Costruisce un dizionario contenente:
+       - nome del gioco;
+       - verdetto finale;
+       - flag booleani per approvazione, revisione o rifiuto;
+       - elenco delle violazioni rilevate.
+    5. Inserisce il risultato nella struttura finale.
+
+    Il valore restituito è una lista di record pronta per essere
+    convertita in DataFrame Pandas e successivamente esportata in CSV.
+    """
     game_names = query_all_values(prolog, "gioco(Nome, _, _, _, _, _, _, _)", "Nome")
     rows = []
 
@@ -191,8 +336,27 @@ def build_decision_rows(prolog) -> list[dict]:
 
 
 def run_prolog_reasoning() -> pd.DataFrame:
-    """Esegue il ragionamento Prolog e salva la tabella decisionale."""
-    # I fatti sono rigenerati a ogni run per evitare modifiche manuali incoerenti.
+    """Esegue l'intera pipeline di ragionamento simbolico.
+
+    Questa funzione rappresenta l'entry point del modulo Prolog e
+    coordina tutte le fasi necessarie alla generazione dei verdetti.
+
+    Sequenza operativa:
+    1. Rigenera il file dei fatti Prolog a partire dai dati correnti.
+    2. Inizializza il motore SWI-Prolog.
+    3. Carica regole e fatti nella Knowledge Base.
+    4. Interroga la base di conoscenza per ottenere le decisioni.
+    5. Converte i risultati in un DataFrame Pandas.
+    6. Salva il report finale nel file:
+       results/prolog_decisions.csv
+    7. Restituisce il DataFrame per ulteriori analisi o visualizzazioni.
+
+    Il risultato finale rappresenta il verdetto di business ottenuto
+    combinando:
+    - regole esperte codificate manualmente;
+    - predizioni del clustering supervisionato;
+    - valutazioni di rischio provenienti dalla rete bayesiana.
+    """
     generate_prolog_facts()
     prolog = consult_knowledge_base()
     decisions_df = pd.DataFrame(build_decision_rows(prolog))

@@ -1,5 +1,5 @@
 Model,SMOTE,Best_F1_Macro,Best_Params
-RandomForest,False,0.9970864201184515,"{'model__max_depth': None, 'model__min_samples_leaf': 1, 'model__n_estimators': 200}"
-RandomForest,True,0.9976751691405499,"{'model__max_depth': None, 'model__min_samples_leaf': 3, 'model__n_estimators': 100}"
-SVM,False,0.987729844475739,"{'model__C': 10, 'model__gamma': 'scale', 'model__kernel': 'linear'}"
-SVM,True,0.9870114470035773,"{'model__C': 10, 'model__gamma': 'scale', 'model__kernel': 'linear'}"
+RandomForest,False,0.9937216329286198,"{'model__max_depth': 20, 'model__min_samples_leaf': 1, 'model__n_estimators': 200}"
+RandomForest,True,0.9941470302896097,"{'model__max_depth': 10, 'model__min_samples_leaf': 1, 'model__n_estimators': 200}"
+SVM,False,0.9873660345353099,"{'model__C': 10, 'model__gamma': 'scale', 'model__kernel': 'linear'}"
+SVM,True,0.9783773223122079,"{'model__C': 10, 'model__gamma': 'scale', 'model__kernel': 'linear'}"

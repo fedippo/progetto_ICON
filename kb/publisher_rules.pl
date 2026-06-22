@@ -1,6 +1,14 @@
 :- dynamic gioco/8.
 :- dynamic predizione_commerciale/2.
 :- dynamic rischio_bayesiano/2.
+:- dynamic soglia_budget_standard/1.
+:- dynamic soglia_budget_ridotta/1.
+:- dynamic soglia_prezzo_alto/1.
+:- dynamic soglia_prezzo_basso/1.
+:- dynamic soglia_review_bassa/1.
+:- dynamic soglia_review_buona/1.
+:- dynamic soglia_lingue_globale/1.
+:- dynamic soglia_lingue_premium/1.
 
 % gioco(Nome, Genere, Prezzo, Ore, Lingue, Multiplayer, Budget, ReviewScoreStimato).
 % predizione_commerciale(Nome, Cluster).
@@ -17,20 +25,15 @@ genere_lungo(simulation).
 genere_breve(puzzle).
 genere_breve(casual).
 
-soglia_budget_standard(150000).
-soglia_budget_ridotta(75000).
-soglia_prezzo_alto(30).
-soglia_prezzo_basso(10).
-soglia_review_bassa(60).
-soglia_review_buona(75).
-
 supporto_globale(Gioco) :-
     gioco(Gioco, _, _, _, Lingue, _, _, _),
-    Lingue >= 3.
+    soglia_lingue_globale(Soglia),
+    Lingue >= Soglia.
 
 supporto_premium(Gioco) :-
     gioco(Gioco, _, _, _, Lingue, _, _, _),
-    Lingue >= 5.
+    soglia_lingue_premium(Soglia),
+    Lingue >= Soglia.
 
 budget_standard_compatibile(Gioco) :-
     gioco(Gioco, _, _, _, _, _, Budget, _),

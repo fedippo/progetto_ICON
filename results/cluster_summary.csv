@@ -1,4 +1,4 @@
 Cluster_Label,Games,Avg_Price,Avg_Review_Score,Median_Reviews,Avg_Playtime_Hours,Avg_Languages,Multiplayer_Rate,Top_Genre
-0,2496,5.479,90.864,125.0,7.313,5.26,0.189,Action
-1,755,3.857,46.388,61.0,3.118,4.603,0.281,Action
-2,1749,5.524,72.394,98.0,7.768,5.791,0.261,Action
+0,2437,6.62,89.993,639.0,18.38,6.723,0.241,Action
+1,757,4.215,48.602,143.0,6.374,4.505,0.3,Action
+2,1806,5.243,73.197,303.0,10.17,6.215,0.3,Action
