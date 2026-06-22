@@ -107,17 +107,17 @@ Risultati principali:
 
 | Query | Stato | Probabilita |
 |---|---:|---:|
-| `P(Cluster_Label | Primary_Genre=0, Price=2)` | 0 | 0.5365 |
-| `P(Cluster_Label | Primary_Genre=0, Price=2)` | 1 | 0.1090 |
-| `P(Cluster_Label | Primary_Genre=0, Price=2)` | 2 | 0.3544 |
-| `P(Cluster_Label | Price=0, Playtime_Hours=1)` | 0 | 0.3586 |
-| `P(Cluster_Label | Price=0, Playtime_Hours=1)` | 1 | 0.2137 |
-| `P(Cluster_Label | Price=0, Playtime_Hours=1)` | 2 | 0.4277 |
-| `P(Review_Score_Pct | Price=2, Multiplayer=1)` | 0 | 0.3661 |
-| `P(Review_Score_Pct | Price=2, Multiplayer=1)` | 1 | 0.3413 |
-| `P(Review_Score_Pct | Price=2, Multiplayer=1)` | 2 | 0.2925 |
+| `P(Cluster_Label | Primary_Genre=1, Price=2)` | 0 | 0.5765 |
+| `P(Cluster_Label | Primary_Genre=1, Price=2)` | 1 | 0.1014 |
+| `P(Cluster_Label | Primary_Genre=1, Price=2)` | 2 | 0.3222 |
+| `P(Cluster_Label | Price=0, Playtime_Hours=2)` | 0 | 0.3847 |
+| `P(Cluster_Label | Price=0, Playtime_Hours=2)` | 1 | 0.2146 |
+| `P(Cluster_Label | Price=0, Playtime_Hours=2)` | 2 | 0.4008 |
+| `P(Review_Score_Pct | Price=2, Multiplayer=1)` | 0 | 0.3139 |
+| `P(Review_Score_Pct | Price=2, Multiplayer=1)` | 1 | 0.3636 |
+| `P(Review_Score_Pct | Price=2, Multiplayer=1)` | 2 | 0.3226 |
 
-La terza query e particolarmente utile per il publisher: dato uno scenario con prezzo alto e multiplayer, la probabilita di review score basso e circa 36.61%, superiore alla probabilita di review score alto. Questo segnala un rischio di pricing o di aspettative utente da considerare nella decisione finale.
+La terza query e particolarmente utile per il publisher: dato uno scenario con prezzo alto e multiplayer, la probabilita di review score basso e circa 31.39%, mentre lo stato medio e il piu probabile. Questo indica un rischio presente ma non dominante, da valutare insieme a prezzo, genere e cluster previsto.
 
 ## Limite osservato
 

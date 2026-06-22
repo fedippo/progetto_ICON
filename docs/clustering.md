@@ -43,9 +43,9 @@ Risultato attuale:
 
 | Cluster | Giochi | Prezzo medio | Review score medio | Recensioni mediane | Playtime medio | Interpretazione provvisoria |
 |---|---:|---:|---:|---:|---:|---|
-| 0 | 2496 | 5.479 | 90.864 | 125 | 7.313 | ricezione molto positiva |
-| 1 | 755 | 3.857 | 46.388 | 61 | 3.118 | rischio commerciale piu alto |
-| 2 | 1749 | 5.524 | 72.394 | 98 | 7.768 | ricezione intermedia |
+| 0 | 2437 | 6.620 | 89.993 | 639 | 18.380 | ricezione molto positiva |
+| 1 | 757 | 4.215 | 48.602 | 143 | 6.374 | rischio commerciale piu alto |
+| 2 | 1806 | 5.243 | 73.197 | 303 | 10.170 | ricezione intermedia |
 
 Le etichette semantiche saranno affinate dopo aver osservato anche distribuzioni, generi e risultati della classificazione.
 

@@ -77,9 +77,9 @@ Distribuzione delle classi:
 
 | Cluster | Esempi | Percentuale |
 |---|---:|---:|
-| 0 | 2496 | 49.92% |
-| 1 | 755 | 15.10% |
-| 2 | 1749 | 34.98% |
+| 0 | 2437 | 48.74% |
+| 1 | 757 | 15.14% |
+| 2 | 1806 | 36.12% |
 
 La classe meno rappresentata e il cluster 1, corrispondente al profilo a maggiore rischio commerciale. Il confronto con SMOTE e quindi utile per verificare se il bilanciamento migliora la stabilita del sistema proprio sulla classe piu critica.
 
@@ -87,12 +87,12 @@ Risultati mediati su 5 fold ripetuti 3 volte:
 
 | Modello | SMOTE | Accuracy | Precision macro | Recall macro | F1 macro |
 |---|---|---:|---:|---:|---:|
-| Random Forest | No | 0.9979 +/- 0.0016 | 0.9973 +/- 0.0020 | 0.9969 +/- 0.0028 | 0.9971 +/- 0.0023 |
-| Random Forest | Si | 0.9983 +/- 0.0009 | 0.9974 +/- 0.0015 | 0.9980 +/- 0.0014 | 0.9977 +/- 0.0014 |
-| SVM | No | 0.9895 +/- 0.0022 | 0.9897 +/- 0.0022 | 0.9859 +/- 0.0037 | 0.9877 +/- 0.0028 |
-| SVM | Si | 0.9890 +/- 0.0034 | 0.9841 +/- 0.0049 | 0.9901 +/- 0.0031 | 0.9870 +/- 0.0040 |
+| Random Forest | No | 0.9929 +/- 0.0018 | 0.9930 +/- 0.0018 | 0.9945 +/- 0.0014 | 0.9937 +/- 0.0015 |
+| Random Forest | Si | 0.9933 +/- 0.0020 | 0.9933 +/- 0.0023 | 0.9950 +/- 0.0015 | 0.9941 +/- 0.0019 |
+| SVM | No | 0.9878 +/- 0.0037 | 0.9879 +/- 0.0046 | 0.9869 +/- 0.0042 | 0.9874 +/- 0.0042 |
+| SVM | Si | 0.9804 +/- 0.0038 | 0.9735 +/- 0.0054 | 0.9837 +/- 0.0037 | 0.9784 +/- 0.0045 |
 
-La Random Forest con SMOTE e il modello migliore sul F1 macro e presenta anche deviazioni standard piu basse rispetto alla versione senza SMOTE. Questo suggerisce che il bilanciamento migliora sia la qualita media della classificazione sia la stabilita sui diversi fold.
+La Random Forest con SMOTE e il modello migliore sul F1 macro. Il miglioramento rispetto alla versione senza SMOTE e contenuto ma coerente sulle metriche macro, segnalando un lieve beneficio nel trattare la classe minoritaria.
 
 Per SVM, invece, SMOTE aumenta la recall macro ma riduce precision macro e F1 macro. In questo caso la versione senza SMOTE risulta preferibile.
 
@@ -100,8 +100,8 @@ Migliori parametri trovati:
 
 | Modello | SMOTE | Parametri migliori |
 |---|---|---|
-| Random Forest | No | `max_depth=None`, `min_samples_leaf=1`, `n_estimators=200` |
-| Random Forest | Si | `max_depth=None`, `min_samples_leaf=3`, `n_estimators=100` |
+| Random Forest | No | `max_depth=20`, `min_samples_leaf=1`, `n_estimators=200` |
+| Random Forest | Si | `max_depth=10`, `min_samples_leaf=1`, `n_estimators=200` |
 | SVM | No | `C=10`, `gamma=scale`, `kernel=linear` |
 | SVM | Si | `C=10`, `gamma=scale`, `kernel=linear` |
 

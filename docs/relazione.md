@@ -32,6 +32,17 @@ Dataset Steam
 
 Il dominio scelto e quello dei giochi pubblicati su Steam. Sono stati esclusi testi liberi, descrizioni, recensioni testuali e immagini. Il sistema lavora su metadati tabulari, come prezzo, genere, recensioni aggregate, numero di lingue, playtime e categorie Steam. Questa scelta evita di spostare il progetto verso NLP, image recognition o recommender systems, mantenendolo centrato sui temi del corso: apprendimento, ragionamento probabilistico e Knowledge-Based Systems.
 
+### Scelta progettuale generale
+
+La scelta principale del progetto e stata costruire un sistema integrato invece di limitarsi a un singolo modello predittivo. Una semplice classificazione avrebbe permesso di assegnare un'etichetta a un gioco, ma non avrebbe mostrato come tale risultato possa essere usato in un processo decisionale piu ampio. Per questo motivo la pipeline collega quattro livelli:
+
+- il clustering scopre profili commerciali non definiti a priori;
+- la classificazione supervisionata impara a riconoscere tali profili;
+- la rete bayesiana valuta scenari incerti e relazioni probabilistiche;
+- Prolog applica regole aziendali esplicite e produce il verdetto finale.
+
+Sono state escluse impostazioni alternative come sistemi di raccomandazione, analisi del testo delle recensioni o classificazione di immagini promozionali. Queste alternative sarebbero state interessanti, ma avrebbero spostato il progetto verso temi meno centrali per ICon e avrebbero richiesto componenti NLP o computer vision non necessarie per dimostrare l'integrazione tra apprendimento e ragionamento.
+
 ### Requisiti funzionali
 
 Il sistema deve:
@@ -94,6 +105,10 @@ Il dataset usato e "Steam Games Dataset" di fronkongames, disponibile su Kaggle.
 
 Il file originale contiene 122611 righe. Per il progetto non e stato usato l'intero dataset in tutte le fasi: dopo pulizia e filtri viene estratto un campione riproducibile di 5000 giochi. La scelta del campionamento e progettuale: consente di mantenere tempi di esecuzione contenuti e rende gestibili clustering, cross-validation e apprendimento della rete bayesiana.
 
+Sono stati considerati anche dataset piu piccoli e gia puliti, come raccolte limitate ai giochi piu popolari. Tali dataset avrebbero semplificato il preprocessing, ma avrebbero ridotto la varieta dei profili commerciali e reso meno interessante la fase di clustering. Il dataset scelto richiede invece una fase di pulizia piu attenta, ma permette di lavorare su un mercato piu ampio e realistico.
+
+Non e stato usato l'intero dataset per due motivi. Il primo e computazionale: la cross-validation ripetuta, SMOTE e la rete bayesiana aumentano il costo dell'esperimento. Il secondo e metodologico: molti giochi nel dataset hanno pochissime recensioni o informazioni di mercato quasi nulle; includerli avrebbe introdotto rumore e reso meno interpretabili i cluster.
+
 ### Correzione dell'intestazione
 
 Durante la prima lettura del CSV e emersa un'anomalia: nell'intestazione compare il campo `DiscountDLC count`, mentre nelle righe dati `Discount` e `DLC count` sono due colonne separate. Se il file viene letto senza correzione, tutte le colonne successive risultano sfalsate.
@@ -106,6 +121,8 @@ La correzione viene gestita direttamente nel codice di preprocessing:
 - il file CSV originale non viene modificato manualmente.
 
 Questa scelta rende la pipeline riproducibile: chi esegue il progetto puo partire dal dataset originale e ottenere lo stesso dataset processato.
+
+L'implementazione si trova in `src/preprocessing.py`. La funzione `build_corrected_header` legge l'intestazione originale, sostituisce il campo fuso con due nomi distinti e passa questa lista a `pandas.read_csv`. In questo modo la correzione non dipende da modifiche manuali al file e puo essere rieseguita in ogni ambiente.
 
 ### Feature selection e feature engineering
 
@@ -124,6 +141,16 @@ Dal dataset originale vengono selezionate e derivate le feature necessarie alle 
 `Review_Count` e `Review_Score_Pct` sono particolarmente importanti perche rappresentano due aspetti diversi: il primo misura il volume di attenzione ricevuta dal gioco, il secondo misura la qualita percepita dagli utenti.
 
 Sono state escluse feature accessorie come piattaforme supportate, eta richiesta, raccomandazioni e stima dei possessori. La scelta riduce la complessita del progetto e mantiene solo variabili direttamente collegate alla decisione commerciale che il publisher deve prendere.
+
+In una prima fase erano state valutate anche feature come `Required age`, numero di piattaforme supportate, raccomandazioni e stima dei possessori. Sono state rimosse per evitare di introdurre variabili difficili da motivare nel dominio decisionale scelto. Ad esempio, l'eta richiesta puo influenzare il pubblico potenziale, ma nel progetto non veniva poi usata in modo esplicito dalla KB; mantenerla avrebbe reso la documentazione meno coerente. Allo stesso modo, raccomandazioni e possessori stimati sono proxy di popolarita parzialmente sovrapposti a `Review_Count`.
+
+La selezione finale privilegia quindi poche feature ma direttamente giustificabili:
+
+- prezzo, per il posizionamento commerciale;
+- recensioni, per volume e ricezione;
+- playtime, per stimare l'offerta di contenuto;
+- genere, per la coerenza commerciale;
+- lingue e multiplayer, per vincoli e rischio di publishing.
 
 ### Filtri applicati
 
@@ -149,6 +176,8 @@ La normalizzazione viene usata per KMeans e SVM, poiche entrambi sono sensibili 
 
 La discretizzazione viene usata per la rete bayesiana. Variabili continue con molti valori distinti produrrebbero CPD sparse e poco gestibili. La discretizzazione in stati basso, medio e alto rende invece l'inferenza piu stabile e interpretabile.
 
+La normalizzazione e implementata con `MinMaxScaler`, mentre la discretizzazione usa `KBinsDiscretizer` con strategia `quantile`. La strategia quantile e stata preferita a una suddivisione uniforme perche alcune variabili, come il numero di recensioni, hanno distribuzioni molto sbilanciate: pochi giochi accumulano moltissime recensioni, mentre la maggioranza resta su valori piu bassi. Con i quantili, i bin risultano piu popolati e quindi piu utili per stimare probabilita nella rete bayesiana.
+
 ## Capitolo 2 - Apprendimento non supervisionato
 
 ### Obiettivo del clustering
@@ -172,6 +201,20 @@ Il KMeans viene applicato alle feature:
 
 La scelta e legata al significato commerciale delle variabili: prezzo, ricezione, volume di recensioni e durata descrivono meglio di altre feature il profilo di mercato di un gioco.
 
+Non sono state incluse feature categoriche nel clustering per mantenere lo spazio geometrico piu semplice e interpretabile. Inserire direttamente il genere avrebbe richiesto codifica one-hot, aumentando la dimensionalita e rendendo meno chiara l'interpretazione dei centroidi. Il genere viene comunque recuperato nella sintesi dei cluster, osservando il genere piu frequente per ciascun gruppo.
+
+### Perche KMeans e non altri algoritmi
+
+KMeans e stato scelto per tre ragioni:
+
+- produce centroidi facilmente interpretabili tramite medie delle feature;
+- e adatto a dati numerici normalizzati;
+- consente di usare l'Elbow Method per motivare il numero di cluster.
+
+Sono state considerate alternative come clustering gerarchico e DBSCAN. Il clustering gerarchico avrebbe prodotto una struttura piu ricca, ma meno immediata da riutilizzare come target supervisionato in una pipeline compatta. DBSCAN avrebbe potuto individuare outlier, ma richiede una scelta delicata di `eps` e `min_samples`; inoltre, su dati di mercato con densita molto variabile, rischia di produrre molti punti rumore o cluster difficili da usare come classi. Per il nostro obiettivo, cioe creare profili commerciali latenti riutilizzabili in classificazione e Prolog, KMeans e risultato piu lineare e documentabile.
+
+Non e stata usata PCA come fase principale perche il numero di feature del clustering e gia ridotto. Una riduzione ulteriore avrebbe reso meno immediata l'interpretazione business dei cluster, che invece e essenziale per motivare il target supervisionato.
+
 ### Scelta del numero di cluster
 
 Il numero di cluster e stato valutato tramite Elbow Method per valori di `K` da 1 a 10. I risultati sono salvati in `results/kmeans_elbow.csv` e il grafico in `results/kmeans_elbow.png`.
@@ -185,15 +228,17 @@ Parametri principali:
 - `max_iter = 300`;
 - seed fisso per riproducibilita.
 
+Nel codice, la fase e implementata in `src/clustering.py`. Lo script carica dataset pulito, normalizzato e discretizzato; esegue l'Elbow Method sul dataset normalizzato; applica KMeans con `SELECTED_K = 3`; infine copia la colonna `Cluster_Label` in tutti i dataset processati. Questa scelta evita disallineamenti tra dataset usati da modelli diversi.
+
 ### Risultati del clustering
 
 La tabella dei centroidi interpretati e:
 
 | Cluster | Giochi | Prezzo medio | Review score medio | Recensioni mediane | Playtime medio | Interpretazione |
 |---|---:|---:|---:|---:|---:|---|
-| 0 | 2496 | 5.479 | 90.864 | 125 | 7.313 | ricezione molto positiva |
-| 1 | 755 | 3.857 | 46.388 | 61 | 3.118 | rischio commerciale piu alto |
-| 2 | 1749 | 5.524 | 72.394 | 98 | 7.768 | ricezione intermedia |
+| 0 | 2437 | 6.620 | 89.993 | 639 | 18.380 | ricezione molto positiva |
+| 1 | 757 | 4.215 | 48.602 | 143 | 6.374 | rischio commerciale piu alto |
+| 2 | 1806 | 5.243 | 73.197 | 303 | 10.170 | ricezione intermedia |
 
 Il cluster 0 presenta la migliore ricezione media, con review score superiore al 90%. Il cluster 1 ha review score molto piu basso e minore playtime medio, quindi viene interpretato come profilo a maggiore rischio. Il cluster 2 rappresenta una fascia intermedia: non e un fallimento netto, ma neppure un profilo fortemente positivo.
 
@@ -227,6 +272,10 @@ Le feature usate sono:
 
 Sono stati confrontati Random Forest e SVM.
 
+La scelta di confrontare questi due modelli e legata alla loro natura diversa. Random Forest e un modello ensemble robusto su feature eterogenee e capace di modellare relazioni non lineari senza richiedere forti assunzioni sulla distribuzione dei dati. SVM, invece, rappresenta una macchina a kernel/margine che permette di verificare se una separazione geometrica nello spazio normalizzato e sufficiente a distinguere i cluster.
+
+Non sono stati scelti modelli neurali perche il dataset finale e tabulare, di dimensione gestibile e con poche feature. Una rete neurale avrebbe introdotto piu iperparametri e minore interpretabilita senza un chiaro vantaggio per gli obiettivi del progetto. Non e stata scelta nemmeno una regressione logistica come modello principale perche i cluster non sono necessariamente separabili linearmente e il confronto con SVM lineare copre gia una parte di questa ipotesi.
+
 Per Random Forest sono stati ricercati:
 
 - `n_estimators`: 100, 200;
@@ -240,6 +289,8 @@ Per SVM sono stati ricercati:
 - `gamma`: `scale`.
 
 La griglia e stata mantenuta compatta per rispettare i tempi del progetto, ma sufficiente a confrontare modelli con capacita diverse.
+
+L'ottimizzazione viene implementata con `GridSearchCV`. Per ogni modello vengono testate le combinazioni della griglia e la configurazione finale viene scelta usando F1 macro come metrica di refit. Questa scelta e coerente con il problema: non interessa massimizzare soltanto l'accuracy complessiva, ma mantenere buone prestazioni anche sulla classe minoritaria, che corrisponde al profilo a maggiore rischio commerciale.
 
 ### Valutazione
 
@@ -260,35 +311,39 @@ La scelta di metriche macro e motivata dalla presenza di classi non perfettament
 
 | Cluster | Esempi | Percentuale |
 |---|---:|---:|
-| 0 | 2496 | 49.92% |
-| 1 | 755 | 15.10% |
-| 2 | 1749 | 34.98% |
+| 0 | 2437 | 48.74% |
+| 1 | 757 | 15.14% |
+| 2 | 1806 | 36.12% |
 
 Per questo motivo ogni modello viene valutato anche con SMOTE. SMOTE e inserito dentro la pipeline di cross-validation: viene applicato solo al training fold, evitando data leakage.
+
+SMOTE non viene applicato prima della cross-validation perche cio introdurrebbe informazioni sintetiche derivate anche dai dati che dovrebbero restare nel fold di validazione. Nel codice, l'uso di `imblearn.pipeline.Pipeline` garantisce che oversampling, preprocessing e training siano ripetuti correttamente all'interno di ogni split.
 
 ### Risultati
 
 | Modello | SMOTE | Accuracy | Precision macro | Recall macro | F1 macro |
 |---|---|---:|---:|---:|---:|
-| Random Forest | No | 0.9979 +/- 0.0016 | 0.9973 +/- 0.0020 | 0.9969 +/- 0.0028 | 0.9971 +/- 0.0023 |
-| Random Forest | Si | 0.9983 +/- 0.0009 | 0.9974 +/- 0.0015 | 0.9980 +/- 0.0014 | 0.9977 +/- 0.0014 |
-| SVM | No | 0.9895 +/- 0.0022 | 0.9897 +/- 0.0022 | 0.9859 +/- 0.0037 | 0.9877 +/- 0.0028 |
-| SVM | Si | 0.9890 +/- 0.0034 | 0.9841 +/- 0.0049 | 0.9901 +/- 0.0031 | 0.9870 +/- 0.0040 |
+| Random Forest | No | 0.9929 +/- 0.0018 | 0.9930 +/- 0.0018 | 0.9945 +/- 0.0014 | 0.9937 +/- 0.0015 |
+| Random Forest | Si | 0.9933 +/- 0.0020 | 0.9933 +/- 0.0023 | 0.9950 +/- 0.0015 | 0.9941 +/- 0.0019 |
+| SVM | No | 0.9878 +/- 0.0037 | 0.9879 +/- 0.0046 | 0.9869 +/- 0.0042 | 0.9874 +/- 0.0042 |
+| SVM | Si | 0.9804 +/- 0.0038 | 0.9735 +/- 0.0054 | 0.9837 +/- 0.0037 | 0.9784 +/- 0.0045 |
 
 Migliori parametri trovati:
 
 | Modello | SMOTE | Parametri migliori |
 |---|---|---|
-| Random Forest | No | `max_depth=None`, `min_samples_leaf=1`, `n_estimators=200` |
-| Random Forest | Si | `max_depth=None`, `min_samples_leaf=3`, `n_estimators=100` |
+| Random Forest | No | `max_depth=20`, `min_samples_leaf=1`, `n_estimators=200` |
+| Random Forest | Si | `max_depth=10`, `min_samples_leaf=1`, `n_estimators=200` |
 | SVM | No | `C=10`, `gamma=scale`, `kernel=linear` |
 | SVM | Si | `C=10`, `gamma=scale`, `kernel=linear` |
 
-La Random Forest con SMOTE ottiene il miglior F1 macro, pari a 0.9977 +/- 0.0014. Il miglioramento rispetto alla versione senza SMOTE riguarda sia il valore medio sia la deviazione standard. Questo indica che il bilanciamento aiuta il modello a essere piu stabile sui diversi fold.
+La Random Forest con SMOTE ottiene il miglior F1 macro, pari a 0.9941 +/- 0.0019. Il miglioramento rispetto alla versione senza SMOTE e contenuto ma coerente sulle metriche macro, segnalando un lieve beneficio nel trattare la classe minoritaria.
 
 Per SVM, invece, SMOTE non porta un miglioramento complessivo: la recall macro aumenta, ma precision macro e F1 macro diminuiscono. La versione SVM senza SMOTE e quindi preferibile alla versione con SMOTE, ma resta inferiore alla Random Forest.
 
 Il modello candidato per l'integrazione nel sistema decisionale e Random Forest con SMOTE.
+
+Il risultato va interpretato con cautela: le metriche molto alte dipendono anche dal fatto che il target supervisionato e stato generato dal clustering sulle stesse feature commerciali. Questo non rende inutile la fase supervisionata, perche il suo scopo non e scoprire una ground truth esterna, ma imparare a replicare il profilo commerciale latente per nuove proposte. Per questo motivo la valutazione viene presentata come stabilita della pipeline, non come prova di predizione di successo reale sul mercato.
 
 ## Capitolo 4 - Ragionamento probabilistico e rete bayesiana
 
@@ -299,6 +354,8 @@ La rete bayesiana viene usata per ragionare in condizioni di incertezza. Il clas
 - cosa succede se il prezzo e alto?
 - il multiplayer aumenta il rischio di recensioni basse?
 - quale cluster e piu probabile dato un certo genere e un certo prezzo?
+
+La rete bayesiana non sostituisce il classificatore supervisionato. Il suo ruolo e diverso: mentre Random Forest e SVM restituiscono una predizione, la rete bayesiana permette di ragionare su dipendenze probabilistiche e su variabili non completamente osservate. Questo e piu vicino a una situazione decisionale reale, in cui il publisher conosce alcune caratteristiche del gioco ma non conosce ancora la ricezione finale degli utenti.
 
 ### Dataset e variabili
 
@@ -315,11 +372,17 @@ La rete usa `steam_games_discretized_clustered.csv`. Le variabili sono:
 
 Le variabili numeriche sono discretizzate in stati 0, 1, 2, interpretati come basso, medio e alto. Questa discretizzazione evita problemi di memoria e CPD molto sparse.
 
+Non e stata usata una rete bayesiana continua per due motivi. Il primo e pratico: molte implementazioni discrete, come quelle usate in `pgmpy`, richiedono stati enumerabili per stimare CPD gestibili. Il secondo e interpretativo: stati come prezzo basso, medio e alto sono piu facilmente traducibili in regole decisionali e in commenti per il publisher rispetto a valori continui molto frammentati.
+
 ### Apprendimento della struttura e dei parametri
 
 La struttura viene appresa tramite HillClimbSearch con score BIC. E stato imposto `max_indegree = 3`, cosi ogni nodo puo avere al massimo tre genitori. La scelta limita la complessita della rete e rende piu leggibili le dipendenze apprese.
 
 I parametri vengono appresi con l'estimatore discreto compatibile con la versione installata di `pgmpy`.
+
+Sono state considerate due alternative: definire manualmente la struttura della rete oppure apprenderla automaticamente. La struttura manuale avrebbe permesso di imporre relazioni intuitive, ad esempio prezzo e durata verso review score. Tuttavia avrebbe rischiato di riflettere solo assunzioni progettuali. Lo structure learning consente invece di ottenere una rete guidata dai dati. Per evitare una rete eccessivamente complessa, e stato introdotto il vincolo `max_indegree = 3`.
+
+Nel codice, questa parte e implementata in `src/bayesian_network.py`. Lo script carica il dataset discretizzato e clusterizzato, apprende la struttura con HillClimbSearch, stima le CPD e salva sia gli archi appresi sia le query in formato CSV. Sono stati gestiti anche cambiamenti di API tra versioni di `pgmpy`, usando `DiscreteBayesianNetwork` e `DiscreteMLE` quando disponibili.
 
 ### Struttura appresa
 
@@ -338,23 +401,25 @@ I parametri vengono appresi con l'estimatore discreto compatibile con la version
 
 Gli archi piu utili per il problema sono `Review_Count -> Cluster_Label`, `Cluster_Label -> Review_Score_Pct` e `Playtime_Hours -> Review_Count`, perche collegano comportamento commerciale, ricezione e durata.
 
+Alcuni archi non vanno letti come causalita certa, ma come dipendenze probabilistiche apprese sui dati. Ad esempio, `Cluster_Label -> Price` non significa che il cluster causi il prezzo nel mondo reale; significa che, nella distribuzione osservata, prezzo e cluster risultano statisticamente collegati secondo la struttura appresa. Nella relazione vengono quindi usati come supporto interpretativo, non come dimostrazione causale.
+
 ### Inferenza
 
 Risultati principali:
 
 | Query | Stato | Probabilita |
 |---|---:|---:|
-| `P(Cluster_Label | Primary_Genre=0, Price=2)` | 0 | 0.5365 |
-| `P(Cluster_Label | Primary_Genre=0, Price=2)` | 1 | 0.1090 |
-| `P(Cluster_Label | Primary_Genre=0, Price=2)` | 2 | 0.3544 |
-| `P(Cluster_Label | Price=0, Playtime_Hours=1)` | 0 | 0.3586 |
-| `P(Cluster_Label | Price=0, Playtime_Hours=1)` | 1 | 0.2137 |
-| `P(Cluster_Label | Price=0, Playtime_Hours=1)` | 2 | 0.4277 |
-| `P(Review_Score_Pct | Price=2, Multiplayer=1)` | 0 | 0.3661 |
-| `P(Review_Score_Pct | Price=2, Multiplayer=1)` | 1 | 0.3413 |
-| `P(Review_Score_Pct | Price=2, Multiplayer=1)` | 2 | 0.2925 |
+| `P(Cluster_Label | Primary_Genre=1, Price=2)` | 0 | 0.5765 |
+| `P(Cluster_Label | Primary_Genre=1, Price=2)` | 1 | 0.1014 |
+| `P(Cluster_Label | Primary_Genre=1, Price=2)` | 2 | 0.3222 |
+| `P(Cluster_Label | Price=0, Playtime_Hours=2)` | 0 | 0.3847 |
+| `P(Cluster_Label | Price=0, Playtime_Hours=2)` | 1 | 0.2146 |
+| `P(Cluster_Label | Price=0, Playtime_Hours=2)` | 2 | 0.4008 |
+| `P(Review_Score_Pct | Price=2, Multiplayer=1)` | 0 | 0.3139 |
+| `P(Review_Score_Pct | Price=2, Multiplayer=1)` | 1 | 0.3636 |
+| `P(Review_Score_Pct | Price=2, Multiplayer=1)` | 2 | 0.3226 |
 
-La query sul prezzo alto e multiplayer e rilevante per il publisher: la probabilita di review score basso e circa 36.61%, maggiore della probabilita di review score alto. Questo risultato suggerisce che, in uno scenario con prezzo alto e componente multiplayer, il publisher dovrebbe valutare con cautela aspettative dell'utente e posizionamento di prezzo.
+La query sul prezzo alto e multiplayer e rilevante per il publisher: la probabilita di review score basso e circa 31.39%, mentre lo stato medio e il piu probabile. Questo risultato suggerisce che, in uno scenario con prezzo alto e componente multiplayer, esiste un rischio da monitorare, ma non dominante rispetto agli altri stati di ricezione.
 
 ## Capitolo 5 - Ragionamento logico e Knowledge Base Prolog
 
@@ -365,6 +430,8 @@ La KB Prolog rappresenta il regolamento interno del publisher. Il suo compito no
 - dati della proposta di gioco;
 - cluster predetto dal modello supervisionato;
 - rischio stimato dalla rete bayesiana.
+
+La scelta di usare Prolog, invece di semplici `if` in Python, e motivata dalla necessita di rappresentare in modo dichiarativo la conoscenza del publisher. Le regole Prolog rendono esplicite le condizioni di approvazione, revisione e rifiuto, separandole dal codice procedurale. Questo permette di discutere la KB come componente autonoma del sistema, non come semplice post-processing numerico.
 
 Il sistema produce tre possibili verdetti:
 
@@ -384,6 +451,15 @@ rischio_bayesiano(Nome, Rischio).
 
 Le regole sono mantenute in `kb/publisher_rules.pl`. I fatti sono generati automaticamente in `kb/generated_facts.pl` dallo script `src/prolog_reasoning.py`. Questa separazione evita di modificare manualmente file generati e distingue la conoscenza stabile del dominio dai dati prodotti dalla pipeline.
 
+La separazione tra regole e fatti e una scelta implementativa importante:
+
+- le regole rappresentano conoscenza stabile del publisher;
+- i fatti rappresentano istanze specifiche di giochi da valutare;
+- Python genera i fatti in ordine, evitando warning Prolog sui predicati non contigui;
+- Prolog resta responsabile del ragionamento finale.
+
+In una versione estesa, i fatti potrebbero essere generati direttamente dall'output del classificatore e dalle probabilita della rete bayesiana. Nel prototipo attuale sono presenti casi dimostrativi costruiti per verificare i diversi rami della KB.
+
 ### Regole implementate
 
 La KB contiene regole per:
@@ -398,11 +474,15 @@ La KB contiene regole per:
 - violazioni bloccanti;
 - approvazione, revisione e rifiuto.
 
+Le soglie principali sono definite come fatti/regole Prolog: budget standard, budget ridotto, prezzo alto, prezzo basso, review score basso e review score buono. Questo rende le soglie modificabili senza cambiare la struttura delle regole.
+
 Esempio di logica decisionale:
 
 - un gioco in cluster di successo puo essere approvato se ha supporto globale, budget compatibile, coerenza genere-durata e rischio accettabile;
 - un gioco intermedio puo essere approvato solo con supporto premium, budget ridotto, review score buono e nessuna violazione;
 - un gioco con rischio critico, localizzazione insufficiente o incoerenza di genere viene rifiutato.
+
+La regola di coerenza genere-durata e stata inserita per evitare che la KB si limiti a confrontare valori numerici isolati. Ad esempio, un RPG con durata molto bassa viene considerato incoerente rispetto alle aspettative commerciali del genere, mentre un puzzle game puo essere coerente anche con una durata piu breve. Questo tipo di vincolo rende il ragionamento piu vicino a una decisione editoriale reale.
 
 ### Perche la KB non e pattern matching
 
@@ -414,6 +494,8 @@ La KB non si limita a cercare fatti esplicitamente presenti. Il verdetto viene d
 - `rischio_critico/1` puo derivare sia da rischio bayesiano alto sia dalla combinazione di prezzo alto e review score basso.
 
 Questa struttura integra output numerici e probabilistici in regole aziendali interpretabili.
+
+Un'alternativa sarebbe stata usare una piccola ontologia o una tabella di regole implementata in Python. Questa soluzione e stata scartata perche avrebbe rischiato di ridurre la KB a un database consultato tramite pattern matching. Prolog, invece, permette di esprimere relazioni derivate, negazione come fallimento e regole alternative per lo stesso predicato, rendendo piu evidente la componente di ragionamento logico.
 
 ### Risultati dimostrativi
 
@@ -448,7 +530,9 @@ Il progetto realizza un sistema integrato di supporto alle decisioni. Il cluster
 
 La valutazione supervisionata rispetta il requisito di non basarsi su un singolo run: i risultati sono mediati su cross-validation ripetuta e includono deviazione standard. La parte Prolog evita una KB usata come semplice database, perche il ragionamento finale dipende da regole multicriterio e da vincoli di coerenza.
 
-Il modello candidato per la predizione del cluster e Random Forest con SMOTE, che raggiunge il miglior F1 macro e la maggiore stabilita. La rete bayesiana fornisce invece un supporto probabilistico utile per valutare rischio di prezzo e ricezione utente. La KB conclude il processo trasformando questi risultati in una decisione interpretabile.
+Il modello candidato per la predizione del cluster e Random Forest con SMOTE, che raggiunge il miglior F1 macro. Il vantaggio rispetto alla versione senza SMOTE e contenuto, ma utile per migliorare il comportamento medio sulla classe minoritaria. La rete bayesiana fornisce invece un supporto probabilistico per valutare rischio di prezzo e ricezione utente. La KB conclude il processo trasformando questi risultati in una decisione interpretabile.
+
+Le alternative piu complesse, come modelli neurali, NLP sulle recensioni o recommender systems, sono state volutamente escluse. L'obiettivo non era massimizzare la complessita tecnica, ma costruire una pipeline coerente con i temi del corso e con il vincolo temporale del progetto. La scelta di pochi metadati commerciali, modelli interpretabili e regole esplicite rende il sistema piu facile da motivare, valutare ed estendere.
 
 ## Sviluppi futuri
 
