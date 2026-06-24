@@ -17,6 +17,7 @@ except ModuleNotFoundError:
 
 from config import (
     CATEGORICAL_FEATURES,
+    CATEGORY_MAPPINGS_PATH,
     CLEAN_DATA_PATH,
     DISCRETIZATION_BINS,
     DISCRETIZED_DATA_PATH,
@@ -289,6 +290,36 @@ def discretize_features(df: pd.DataFrame) -> pd.DataFrame:
     return discretized
 
 
+def export_category_mappings(df: pd.DataFrame) -> pd.DataFrame:
+    """Salva la corrispondenza tra categorie originali e codici numerici.
+
+    La rete bayesiana richiede stati interi, quindi variabili come `Primary_Genre`
+    vengono trasformate in codici numerici. Senza questa tabella, una query del tipo
+    `Primary_Genre=1` sarebbe corretta per il modello ma poco interpretabile nella
+    relazione. La funzione esporta quindi una legenda stabile per leggere i risultati.
+    """
+    rows = []
+
+    for column in CATEGORICAL_FEATURES:
+        if column not in df.columns:
+            continue
+
+        categories = df[column].astype("category").cat.categories
+        for code, value in enumerate(categories):
+            rows.append(
+                {
+                    "Column": column,
+                    "Code": code,
+                    "Value": value,
+                }
+            )
+
+    mappings_df = pd.DataFrame(rows)
+    Path(CATEGORY_MAPPINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+    mappings_df.to_csv(CATEGORY_MAPPINGS_PATH, index=False)
+    return mappings_df
+
+
 def run_preprocessing() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Funzione orchestratrice (Entry Point) del file di preprocessing.
 
@@ -305,6 +336,7 @@ def run_preprocessing() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     clean_df = clean_and_sample(project_df)
     normalized_df = normalize_numeric_features(clean_df)
     discretized_df = discretize_features(clean_df)
+    export_category_mappings(clean_df)
 
     Path(CLEAN_DATA_PATH).parent.mkdir(parents=True, exist_ok=True)
     clean_df.to_csv(CLEAN_DATA_PATH, index=False)

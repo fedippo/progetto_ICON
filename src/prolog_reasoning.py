@@ -11,77 +11,124 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+from joblib import load
 
+from bayesian_network import estimate_bayesian_risks
 from config import (
-    GOOD_REVIEW_SCORE_THRESHOLD,
+    CLUSTERED_CLEAN_DATA_PATH,
     HIGH_PRICE_THRESHOLD,
     LOW_PRICE_THRESHOLD,
-    LOW_REVIEW_SCORE_THRESHOLD,
-    MAX_GRANT_BUDGET,
     MIN_GLOBAL_LANGUAGES,
     MIN_PREMIUM_LANGUAGES,
     PROLOG_DECISIONS_PATH,
     PROLOG_FACTS_PATH,
     PROLOG_RULES_PATH,
-    REDUCED_GRANT_BUDGET,
+    SUPERVISED_FEATURES,
+    SUPERVISED_MODEL_PATH,
 )
 
 
 DEMO_GAMES = [
-    # Caso positivo: RPG coerente, localizzato e con rischio basso.
+    # Caso di successo assicurato: Strategia longevo, prezzo equo, super localizzato, rischio minimo.
     {
-        "name": "hades_like",
-        "genre": "rpg",
-        "price": 24.99,
-        "hours": 30,
-        "languages": 8,
+        "name": "stellar_strategy_master",
+        "genre": "strategy",
+        "primary_genre": "Strategy",
+        "price": 19.99,
+        "hours": 50,
+        "languages": 12,
         "multiplayer": 0,
-        "budget": 120000,
-        "review_score": 88,
-        "cluster": "cluster_0",
-        "risk": "basso",
     },
-    # Caso intermedio: review sotto soglia (72 < 75) e rischio non accettabile
-    # (rischio medio con prezzo alto >= 30). Entrambe le condizioni bloccano l'approvazione;
+    # Caso intermedio: gioco coerente e ben localizzato, ma con prezzo alto.
     {
         "name": "short_puzzle_deluxe",
         "genre": "puzzle",
+        "primary_genre": "Puzzle",
         "price": 34.99,
         "hours": 4,
         "languages": 6,
         "multiplayer": 0,
-        "budget": 60000,
-        "review_score": 72,
-        "cluster": "cluster_2",
-        "risk": "medio",
     },
-    # Caso respinto: cluster positivo, ma localizzazione insufficiente.
+    # Caso respinto: caratteristiche buone, ma localizzazione insufficiente.
     {
         "name": "underlocalized_action",
         "genre": "action",
+        "primary_genre": "Action",
         "price": 19.99,
         "hours": 9,
         "languages": 1,
         "multiplayer": 1,
-        "budget": 90000,
-        "review_score": 81,
-        "cluster": "cluster_0",
-        "risk": "basso",
     },
-    # Caso respinto: cluster rischioso, RPG troppo corto e rischio bayesiano alto.
+    # Caso respinto: RPG troppo corto, prezzo alto e multiplayer.
     {
         "name": "overpriced_multiplayer_rpg",
         "genre": "rpg",
+        "primary_genre": "RPG",
         "price": 49.99,
         "hours": 8,
         "languages": 5,
         "multiplayer": 1,
-        "budget": 180000,
-        "review_score": 55,
-        "cluster": "cluster_1",
-        "risk": "alto",
     },
 ]
+
+
+def load_supervised_model():
+    """Carica il miglior modello supervisionato salvato dalla fase di training."""
+    model_path = Path(SUPERVISED_MODEL_PATH)
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"Supervised model not found at {model_path}. Run src/supervised_learning.py first."
+        )
+    return load(model_path)
+
+
+def build_model_input(games: list[dict]) -> pd.DataFrame:
+    """Costruisce il DataFrame di input per il classificatore pre-lancio.
+
+    I giochi demo sono descritti con valori reali leggibili da Prolog. Il modello,
+    pero, e stato addestrato sui dataset normalizzati: per questo le variabili
+    numeriche vengono riscalate usando minimi e massimi del dataset pulito.
+    """
+    clean_path = Path(CLUSTERED_CLEAN_DATA_PATH)
+    if not clean_path.exists():
+        raise FileNotFoundError(
+            f"Clean clustered dataset not found at {clean_path}. Run src/clustering.py first."
+        )
+
+    clean_df = pd.read_csv(clean_path)
+    rows = []
+    for game in games:
+        rows.append(
+            {
+                "Primary_Genre": game["primary_genre"],
+                "Price": game["price"],
+                "Playtime_Hours": game["hours"],
+                "Languages_Count": game["languages"],
+                "Multiplayer": game["multiplayer"],
+            }
+        )
+
+    model_input = pd.DataFrame(rows)
+    for column in ["Price", "Playtime_Hours", "Languages_Count"]:
+        minimum = clean_df[column].min()
+        maximum = clean_df[column].max()
+        if maximum == minimum:
+            model_input[column] = 0
+        else:
+            model_input[column] = (model_input[column] - minimum) / (maximum - minimum)
+
+    return model_input[SUPERVISED_FEATURES]
+
+
+def predict_commercial_profiles(games: list[dict]) -> dict[str, str]:
+    """Predice il cluster commerciale dei giochi demo con il modello supervisionato."""
+    model = load_supervised_model()
+    model_input = build_model_input(games)
+    predictions = model.predict(model_input)
+    return {
+        game["name"]: f"cluster_{int(prediction)}"
+        for game, prediction in zip(games, predictions)
+    }
 
 
 def generate_prolog_facts(games: list[dict] = DEMO_GAMES) -> Path:
@@ -91,18 +138,21 @@ def generate_prolog_facts(games: list[dict] = DEMO_GAMES) -> Path:
     Le regole decisionali del publisher sono definite staticamente nel file
     'publisher_rules.pl', mentre i dati dei giochi cambiano ad ogni esecuzione.
     Questa funzione realizza il collegamento tra Python e Prolog trasformando
-    i risultati prodotti dagli algoritmi di Machine Learning in fatti logici.
+    giochi da valutare in fatti logici. I casi dimostrativi contengono caratteristiche
+    disponibili o stimabili prima della pubblicazione: genere, prezzo, durata prevista,
+    lingue e multiplayer. Il cluster commerciale viene predetto dal
+    miglior modello supervisionato salvato, mentre il verdetto viene derivato da Prolog.
 
     Funzionamento:
     1. Crea la cartella di destinazione se non esiste.
     2. Scrive nel file le soglie di business definite in config.py
-       (budget, lingue, prezzo e review score).
+       (lingue e prezzo).
     3. Converte ogni gioco nel predicato:
-       gioco(Nome, Genere, Prezzo, Ore, Lingue, Multiplayer, Budget, ReviewScore).
-    4. Converte il cluster previsto dal modello supervisionato nel predicato:
+       gioco(Nome, Genere, Prezzo, Ore, Lingue, Multiplayer).
+    4. Predice il cluster con il miglior modello supervisionato e lo scrive come:
        predizione_commerciale(Gioco, Cluster).
-    5. Converte la stima di rischio proveniente dalla componente probabilistica:
-       rischio_bayesiano(Gioco, LivelloRischio).
+    5. Stima il rischio di recensioni basse con la rete bayesiana e lo scrive come:
+       rischio_bayesiano(Gioco, Rischio).
     6. Salva il file .pl risultante e restituisce il percorso generato.
 
     Il file prodotto costituisce la base di fatti interrogata successivamente
@@ -110,22 +160,20 @@ def generate_prolog_facts(games: list[dict] = DEMO_GAMES) -> Path:
     """
     facts_path = Path(PROLOG_FACTS_PATH)
     facts_path.parent.mkdir(parents=True, exist_ok=True)
+    predicted_clusters = predict_commercial_profiles(games)
+    bayesian_risks = estimate_bayesian_risks(games, predicted_clusters)
 
     lines = [
         "% File generato da src/prolog_reasoning.py.",
         "",
-        f"soglia_budget_standard({MAX_GRANT_BUDGET}).",
-        f"soglia_budget_ridotta({REDUCED_GRANT_BUDGET}).",
         f"soglia_lingue_globale({MIN_GLOBAL_LANGUAGES}).",
         f"soglia_lingue_premium({MIN_PREMIUM_LANGUAGES}).",
         f"soglia_prezzo_alto({HIGH_PRICE_THRESHOLD}).",
         f"soglia_prezzo_basso({LOW_PRICE_THRESHOLD}).",
-        f"soglia_review_bassa({LOW_REVIEW_SCORE_THRESHOLD}).",
-        f"soglia_review_buona({GOOD_REVIEW_SCORE_THRESHOLD}).",
         "",
     ]
 
-    # Prolog preferisce predicati contigui: prima tutti i gioco/8.
+    # Ogni fatto contiene solo informazioni pre-pubblicazione.
     for game in games:
         lines.append(
             "gioco("
@@ -134,21 +182,28 @@ def generate_prolog_facts(games: list[dict] = DEMO_GAMES) -> Path:
             f"{game['price']}, "
             f"{game['hours']}, "
             f"{game['languages']}, "
-            f"{game['multiplayer']}, "
-            f"{game['budget']}, "
-            f"{game['review_score']}"
+            f"{game['multiplayer']}"
             ")."
         )
 
     lines.append("")
-    # Poi tutte le predizioni commerciali derivate dal modello supervisionato.
     for game in games:
-        lines.append(f"predizione_commerciale({game['name']}, {game['cluster']}).")
+        lines.append(
+            f"predizione_commerciale({game['name']}, {predicted_clusters[game['name']]})."
+        )
 
     lines.append("")
-    # Infine il rischio derivato dalla componente bayesiana o da scenario business.
     for game in games:
-        lines.append(f"rischio_bayesiano({game['name']}, {game['risk']}).")
+        risk_info = bayesian_risks[game["name"]]
+        lines.append(f"rischio_bayesiano({game['name']}, {risk_info['risk']}).")
+
+    lines.append("")
+    for game in games:
+        risk_info = bayesian_risks[game["name"]]
+        probability = float(risk_info["low_review_probability"])
+        lines.append(
+            f"probabilita_recensioni_basse({game['name']}, {probability:.6f})."
+        )
 
     facts_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return facts_path
@@ -280,6 +335,20 @@ def unique_preserving_order(values: list[str]) -> list[str]:
     return unique_values
 
 
+def query_derived_profile(prolog, game: str) -> str:
+    """Restituisce il profilo commerciale derivato dalle regole Prolog."""
+    profile_checks = [
+        ("successo", f"profilo_successo({game})"),
+        ("intermedio", f"profilo_intermedio({game})"),
+        ("rischio", f"profilo_rischio({game})"),
+        ("medio", f"rischio_medio({game})"),
+    ]
+    for label, query in profile_checks:
+        if list(prolog.query(query)):
+            return label
+    return "non_derivato"
+
+
 def build_decision_rows(prolog) -> list[dict]:
     """Costruisce la tabella finale dei risultati decisionali.
 
@@ -288,7 +357,7 @@ def build_decision_rows(prolog) -> list[dict]:
 
     Funzionamento:
     1. Recupera tutti i giochi presenti nella Knowledge Base
-       interrogando il predicato 'gioco/8'.
+       interrogando il predicato 'gioco/6'.
     2. Per ciascun gioco esegue una serie di interrogazioni:
        - verdetto(Game, Verdetto)
        - approva_finanziamento(Game)
@@ -306,12 +375,28 @@ def build_decision_rows(prolog) -> list[dict]:
     Il valore restituito è una lista di record pronta per essere
     convertita in DataFrame Pandas e successivamente esportata in CSV.
     """
-    game_names = query_all_values(prolog, "gioco(Nome, _, _, _, _, _, _, _)", "Nome")
+    game_names = query_all_values(prolog, "gioco(Nome, _, _, _, _, _)", "Nome")
     rows = []
 
     for game in game_names:
         # Verdetto principale: approvato, revisione o rifiutato.
         verdict = query_single_value(prolog, f"verdetto({game}, Verdetto)", "Verdetto")
+        predicted_cluster = query_single_value(
+            prolog,
+            f"predizione_commerciale({game}, Cluster)",
+            "Cluster",
+        )
+        bayesian_risk = query_single_value(
+            prolog,
+            f"rischio_bayesiano({game}, Rischio)",
+            "Rischio",
+        )
+        low_review_probability = query_single_value(
+            prolog,
+            f"probabilita_recensioni_basse({game}, Probabilita)",
+            "Probabilita",
+        )
+        derived_profile = query_derived_profile(prolog, game)
 
         # Le violazioni spiegano perche un gioco viene bloccato.
         violations = query_all_values(
@@ -324,6 +409,10 @@ def build_decision_rows(prolog) -> list[dict]:
         rows.append(
             {
                 "Game": game,
+                "Predicted_Cluster": predicted_cluster or "nessun_cluster",
+                "Bayesian_Risk": bayesian_risk or "nessun_rischio",
+                "Low_Review_Probability": low_review_probability or "n/a",
+                "Derived_Profile": derived_profile,
                 "Verdict": verdict or "nessun_verdetto",
                 "Approved": bool(list(prolog.query(f"approva_finanziamento({game})"))),
                 "Needs_Review": bool(list(prolog.query(f"richiede_revisione({game})"))),
@@ -342,7 +431,7 @@ def run_prolog_reasoning() -> pd.DataFrame:
     coordina tutte le fasi necessarie alla generazione dei verdetti.
 
     Sequenza operativa:
-    1. Rigenera il file dei fatti Prolog a partire dai dati correnti.
+    1. Rigenera il file dei fatti Prolog a partire dai casi dimostrativi correnti.
     2. Inizializza il motore SWI-Prolog.
     3. Carica regole e fatti nella Knowledge Base.
     4. Interroga la base di conoscenza per ottenere le decisioni.
@@ -354,8 +443,8 @@ def run_prolog_reasoning() -> pd.DataFrame:
     Il risultato finale rappresenta il verdetto di business ottenuto
     combinando:
     - regole esperte codificate manualmente;
-    - predizioni del clustering supervisionato;
-    - valutazioni di rischio provenienti dalla rete bayesiana.
+    - profilo commerciale e rischio derivati da Prolog;
+    - caratteristiche pre-pubblicazione rappresentate come fatti logici.
     """
     generate_prolog_facts()
     prolog = consult_knowledge_base()

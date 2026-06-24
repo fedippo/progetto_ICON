@@ -2,7 +2,7 @@
 
 ## Obiettivo
 
-La rete bayesiana serve a modellare l'incertezza commerciale del publisher. A differenza del classificatore supervisionato, che restituisce una predizione del cluster, la rete permette di interrogare probabilisticamente scenari incompleti.
+La rete bayesiana serve a modellare l'incertezza commerciale del publisher. A differenza del classificatore supervisionato pre-lancio, che restituisce una predizione del cluster usando solo metadati disponibili prima della pubblicazione, la rete permette di interrogare probabilisticamente scenari incompleti.
 
 Esempi di domande:
 
@@ -97,6 +97,8 @@ Gli stati discreti sono interpretati come:
 - `1`: valore medio;
 - `2`: valore alto.
 
+Per le variabili categoriche, come `Primary_Genre`, la mappatura tra codice numerico e valore testuale viene esportata in `results/category_mappings.csv` durante il preprocessing.
+
 Per `Cluster_Label`, l'interpretazione segue il clustering:
 
 - `0`: ricezione molto positiva;
@@ -117,8 +119,8 @@ Risultati principali:
 | `P(Review_Score_Pct | Price=2, Multiplayer=1)` | 1 | 0.3636 |
 | `P(Review_Score_Pct | Price=2, Multiplayer=1)` | 2 | 0.3226 |
 
-La terza query e particolarmente utile per il publisher: dato uno scenario con prezzo alto e multiplayer, la probabilita di review score basso e circa 31.39%, mentre lo stato medio e il piu probabile. Questo indica un rischio presente ma non dominante, da valutare insieme a prezzo, genere e cluster previsto.
+La terza query e particolarmente utile per il publisher: dato uno scenario con prezzo alto e multiplayer, la probabilita di review score basso e circa 31.39%, mentre lo stato medio e il piu probabile. Questo indica un rischio presente ma non dominante, da valutare insieme a prezzo, genere e cluster previsto dal classificatore pre-lancio.
 
 ## Limite osservato
 
-Le query usano stati numerici generati dalla discretizzazione. Nella relazione finale sara quindi necessario spiegare la mappatura basso/medio/alto e collegarla ai bin prodotti dal preprocessing.
+Le query usano stati numerici generati dalla discretizzazione. La lettura corretta richiede quindi di affiancare ai risultati sia la mappatura basso/medio/alto delle variabili numeriche sia la legenda delle categorie esportata dal preprocessing.

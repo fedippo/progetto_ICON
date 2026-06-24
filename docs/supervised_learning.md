@@ -2,7 +2,9 @@
 
 ## Obiettivo
 
-La fase supervisionata usa `Cluster_Label`, ottenuto dal clustering KMeans, come variabile target. Il modello deve prevedere il profilo commerciale di un nuovo gioco prima della pubblicazione.
+La fase supervisionata usa `Cluster_Label`, ottenuto dal clustering KMeans, come variabile target. Il modello deve riconoscere il profilo commerciale di un gioco in scenario pre-lancio, usando solo metadati disponibili o stimabili prima della pubblicazione.
+
+Per questo motivo `Review_Count` e `Review_Score_Pct` non vengono usati come feature supervisionate: restano utili per costruire e interpretare i cluster, ma sarebbero segnali post-pubblicazione non disponibili per una nuova proposta.
 
 In questo modo il clustering non resta un esercizio isolato: produce le classi operative usate dal sistema decisionale.
 
@@ -20,8 +22,6 @@ Feature usate:
 
 - `Primary_Genre`;
 - `Price`;
-- `Review_Score_Pct`;
-- `Review_Count`;
 - `Playtime_Hours`;
 - `Languages_Count`;
 - `Multiplayer`.
@@ -81,28 +81,24 @@ Distribuzione delle classi:
 | 1 | 757 | 15.14% |
 | 2 | 1806 | 36.12% |
 
-La classe meno rappresentata e il cluster 1, corrispondente al profilo a maggiore rischio commerciale. Il confronto con SMOTE e quindi utile per verificare se il bilanciamento migliora la stabilita del sistema proprio sulla classe piu critica.
+La classe meno rappresentata e il cluster 1, corrispondente al profilo a maggiore rischio commerciale. Il confronto con SMOTE resta utile per verificare se il bilanciamento migliora la stabilita del sistema proprio sulla classe piu critica.
 
 Risultati mediati su 5 fold ripetuti 3 volte:
 
 | Modello | SMOTE | Accuracy | Precision macro | Recall macro | F1 macro |
 |---|---|---:|---:|---:|---:|
-| Random Forest | No | 0.9929 +/- 0.0018 | 0.9930 +/- 0.0018 | 0.9945 +/- 0.0014 | 0.9937 +/- 0.0015 |
-| Random Forest | Si | 0.9933 +/- 0.0020 | 0.9933 +/- 0.0023 | 0.9950 +/- 0.0015 | 0.9941 +/- 0.0019 |
-| SVM | No | 0.9878 +/- 0.0037 | 0.9879 +/- 0.0046 | 0.9869 +/- 0.0042 | 0.9874 +/- 0.0042 |
-| SVM | Si | 0.9804 +/- 0.0038 | 0.9735 +/- 0.0054 | 0.9837 +/- 0.0037 | 0.9784 +/- 0.0045 |
-
-La Random Forest con SMOTE e il modello migliore sul F1 macro. Il miglioramento rispetto alla versione senza SMOTE e contenuto ma coerente sulle metriche macro, segnalando un lieve beneficio nel trattare la classe minoritaria.
-
-Per SVM, invece, SMOTE aumenta la recall macro ma riduce precision macro e F1 macro. In questo caso la versione senza SMOTE risulta preferibile.
+| Random Forest | No | 0.4947 +/- 0.0168 | 0.4316 +/- 0.0189 | 0.4139 +/- 0.0148 | 0.4153 +/- 0.0155 |
+| Random Forest | Si | 0.4659 +/- 0.0149 | 0.4305 +/- 0.0122 | 0.4488 +/- 0.0126 | 0.4298 +/- 0.0125 |
+| SVM | No | 0.4966 +/- 0.0104 | 0.4908 +/- 0.0658 | 0.3638 +/- 0.0093 | 0.3220 +/- 0.0134 |
+| SVM | Si | 0.3925 +/- 0.0148 | 0.3975 +/- 0.0151 | 0.4184 +/- 0.0139 | 0.3695 +/- 0.0136 |
 
 Migliori parametri trovati:
 
 | Modello | SMOTE | Parametri migliori |
 |---|---|---|
-| Random Forest | No | `max_depth=20`, `min_samples_leaf=1`, `n_estimators=200` |
-| Random Forest | Si | `max_depth=10`, `min_samples_leaf=1`, `n_estimators=200` |
-| SVM | No | `C=10`, `gamma=scale`, `kernel=linear` |
-| SVM | Si | `C=10`, `gamma=scale`, `kernel=linear` |
+| Random Forest | No | `max_depth=20`, `min_samples_leaf=1`, `n_estimators=100` |
+| Random Forest | Si | `max_depth=20`, `min_samples_leaf=3`, `n_estimators=200` |
+| SVM | No | `C=10`, `gamma=scale`, `kernel=rbf` |
+| SVM | Si | `C=10`, `gamma=scale`, `kernel=rbf` |
 
-Conclusione operativa: per predire il profilo commerciale di un nuovo gioco, il candidato principale e Random Forest con SMOTE. Il risultato verra usato come input della KB Prolog nella fase decisionale finale.
+Conclusione operativa: nello scenario pre-lancio il candidato principale e Random Forest con SMOTE, perche ottiene il miglior F1 macro. Il risultato verra usato come input della KB Prolog nella fase decisionale finale.

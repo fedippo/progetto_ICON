@@ -1,0 +1,26 @@
+Column,Code,Value
+Primary_Genre,0,Accounting
+Primary_Genre,1,Action
+Primary_Genre,2,Adventure
+Primary_Genre,3,Animation & Modeling
+Primary_Genre,4,Audio Production
+Primary_Genre,5,Casual
+Primary_Genre,6,Design & Illustration
+Primary_Genre,7,Early Access
+Primary_Genre,8,Education
+Primary_Genre,9,Free To Play
+Primary_Genre,10,Gore
+Primary_Genre,11,Indie
+Primary_Genre,12,Massively Multiplayer
+Primary_Genre,13,Nudity
+Primary_Genre,14,Photo Editing
+Primary_Genre,15,RPG
+Primary_Genre,16,Racing
+Primary_Genre,17,Sexual Content
+Primary_Genre,18,Simulation
+Primary_Genre,19,Sports
+Primary_Genre,20,Strategy
+Primary_Genre,21,Utilities
+Primary_Genre,22,Violent
+Multiplayer,0,0
+Multiplayer,1,1

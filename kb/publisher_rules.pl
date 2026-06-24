@@ -1,18 +1,16 @@
-:- dynamic gioco/8.
+:- dynamic gioco/6.
 :- dynamic predizione_commerciale/2.
 :- dynamic rischio_bayesiano/2.
-:- dynamic soglia_budget_standard/1.
-:- dynamic soglia_budget_ridotta/1.
+:- dynamic probabilita_recensioni_basse/2.
 :- dynamic soglia_prezzo_alto/1.
 :- dynamic soglia_prezzo_basso/1.
-:- dynamic soglia_review_bassa/1.
-:- dynamic soglia_review_buona/1.
 :- dynamic soglia_lingue_globale/1.
 :- dynamic soglia_lingue_premium/1.
 
-% gioco(Nome, Genere, Prezzo, Ore, Lingue, Multiplayer, Budget, ReviewScoreStimato).
-% predizione_commerciale(Nome, Cluster).
-% rischio_bayesiano(Nome, Rischio).
+% gioco(Nome, Genere, Prezzo, OreStimate, Lingue, Multiplayer).
+% predizione_commerciale(Nome, Cluster) e generato dal miglior modello supervisionato.
+% rischio_bayesiano(Nome, Rischio) e stimato dalla rete bayesiana.
+% Tutti i fatti descrivono informazioni note o stimabili prima della pubblicazione.
 
 cluster_successo(cluster_0).
 cluster_intermedio(cluster_2).
@@ -26,141 +24,142 @@ genere_breve(puzzle).
 genere_breve(casual).
 
 supporto_globale(Gioco) :-
-    gioco(Gioco, _, _, _, Lingue, _, _, _),
+    gioco(Gioco, _, _, _, Lingue, _),
     soglia_lingue_globale(Soglia),
     Lingue >= Soglia.
 
 supporto_premium(Gioco) :-
-    gioco(Gioco, _, _, _, Lingue, _, _, _),
+    gioco(Gioco, _, _, _, Lingue, _),
     soglia_lingue_premium(Soglia),
     Lingue >= Soglia.
 
-budget_standard_compatibile(Gioco) :-
-    gioco(Gioco, _, _, _, _, _, Budget, _),
-    soglia_budget_standard(Soglia),
-    Budget =< Soglia.
-
-budget_ridotto_compatibile(Gioco) :-
-    gioco(Gioco, _, _, _, _, _, Budget, _),
-    soglia_budget_ridotta(Soglia),
-    Budget =< Soglia.
-
 prezzo_alto(Gioco) :-
-    gioco(Gioco, _, Prezzo, _, _, _, _, _),
+    gioco(Gioco, _, Prezzo, _, _, _),
     soglia_prezzo_alto(Soglia),
     Prezzo >= Soglia.
 
 prezzo_basso(Gioco) :-
-    gioco(Gioco, _, Prezzo, _, _, _, _, _),
+    gioco(Gioco, _, Prezzo, _, _, _),
     soglia_prezzo_basso(Soglia),
     Prezzo =< Soglia.
 
-review_bassa(Gioco) :-
-    gioco(Gioco, _, _, _, _, _, _, ReviewScore),
-    soglia_review_bassa(Soglia),
-    ReviewScore < Soglia.
-
-review_buona(Gioco) :-
-    gioco(Gioco, _, _, _, _, _, _, ReviewScore),
-    soglia_review_buona(Soglia),
-    ReviewScore >= Soglia.
-
 coerenza_genere(Gioco) :-
-    gioco(Gioco, Genere, _, Ore, _, _, _, _),
+    gioco(Gioco, Genere, _, Ore, _, _),
     genere_lungo(Genere),
     Ore >= 15.
 
 coerenza_genere(Gioco) :-
-    gioco(Gioco, Genere, _, Ore, _, _, _, _),
+    gioco(Gioco, Genere, _, Ore, _, _),
     genere_breve(Genere),
     Ore =< 25.
 
 coerenza_genere(Gioco) :-
-    gioco(Gioco, Genere, _, _, _, _, _, _),
+    gioco(Gioco, Genere, _, _, _, _),
     \+ genere_lungo(Genere),
     \+ genere_breve(Genere).
 
 incoerenza_genere(Gioco) :-
-    gioco(Gioco, Genere, _, Ore, _, _, _, _),
+    gioco(Gioco, Genere, _, Ore, _, _),
     genere_lungo(Genere),
     Ore < 15.
 
 incoerenza_genere(Gioco) :-
-    gioco(Gioco, Genere, _, Ore, _, _, _, _),
+    gioco(Gioco, Genere, _, Ore, _, _),
     genere_breve(Genere),
     Ore > 25.
 
-rischio_accettabile(Gioco) :-
-    rischio_bayesiano(Gioco, basso).
+multiplayer_presente(Gioco) :-
+    gioco(Gioco, _, _, _, _, 1).
 
-rischio_accettabile(Gioco) :-
-    rischio_bayesiano(Gioco, medio),
+profilo_successo(Gioco) :-
+    predizione_commerciale(Gioco, Cluster),
+    cluster_successo(Cluster),
+    supporto_premium(Gioco),
+    coerenza_genere(Gioco),
     \+ prezzo_alto(Gioco).
 
-rischio_critico(Gioco) :-
+profilo_intermedio(Gioco) :-
+    predizione_commerciale(Gioco, Cluster),
+    cluster_intermedio(Cluster),
+    supporto_globale(Gioco),
+    coerenza_genere(Gioco),
+    \+ profilo_successo(Gioco),
+    \+ profilo_rischio(Gioco).
+
+profilo_rischio(Gioco) :-
+    predizione_commerciale(Gioco, Cluster),
+    cluster_rischio(Cluster).
+
+profilo_rischio(Gioco) :-
     rischio_bayesiano(Gioco, alto).
 
-rischio_critico(Gioco) :-
+profilo_rischio(Gioco) :-
+    \+ supporto_globale(Gioco).
+
+profilo_rischio(Gioco) :-
+    incoerenza_genere(Gioco).
+
+profilo_rischio(Gioco) :-
     prezzo_alto(Gioco),
-    review_bassa(Gioco).
+    multiplayer_presente(Gioco).
+
+rischio_medio(Gioco) :-
+    rischio_bayesiano(Gioco, medio),
+    \+ profilo_rischio(Gioco).
+
+rischio_medio(Gioco) :-
+    prezzo_alto(Gioco),
+    supporto_premium(Gioco),
+    \+ multiplayer_presente(Gioco),
+    coerenza_genere(Gioco).
+
+rischio_medio(Gioco) :-
+    profilo_intermedio(Gioco).
+
+rischio_accettabile(Gioco) :-
+    \+ profilo_rischio(Gioco),
+    \+ rischio_medio(Gioco).
+
+rischio_critico(Gioco) :-
+    profilo_rischio(Gioco).
+
+violazione_bloccante(Gioco, localizzazione_insufficiente) :-
+    \+ supporto_globale(Gioco).
 
 violazione_bloccante(Gioco, incoerenza_genere) :-
     incoerenza_genere(Gioco).
 
 violazione_bloccante(Gioco, rischio_critico) :-
-    rischio_critico(Gioco).
+    rischio_bayesiano(Gioco, alto).
 
-violazione_bloccante(Gioco, localizzazione_insufficiente) :-
-    \+ supporto_globale(Gioco).
-
-approva_finanziamento(Gioco) :-
-    predizione_commerciale(Gioco, Cluster),
-    cluster_successo(Cluster),
-    supporto_globale(Gioco),
-    budget_standard_compatibile(Gioco),
-    coerenza_genere(Gioco),
-    rischio_accettabile(Gioco).
+violazione_bloccante(Gioco, rischio_critico) :-
+    prezzo_alto(Gioco),
+    multiplayer_presente(Gioco).
 
 approva_finanziamento(Gioco) :-
-    predizione_commerciale(Gioco, Cluster),
-    cluster_intermedio(Cluster),
-    supporto_premium(Gioco),
-    budget_ridotto_compatibile(Gioco),
-    coerenza_genere(Gioco),
-    review_buona(Gioco),
+    profilo_successo(Gioco),
     rischio_accettabile(Gioco).
 
 richiede_revisione(Gioco) :-
-    predizione_commerciale(Gioco, Cluster),
-    cluster_successo(Cluster),
-    supporto_globale(Gioco),
-    coerenza_genere(Gioco),
-    rischio_bayesiano(Gioco, medio),
-    prezzo_alto(Gioco).
+    rischio_medio(Gioco),
+    \+ violazione_bloccante(Gioco, _).
 
 richiede_revisione(Gioco) :-
-    predizione_commerciale(Gioco, Cluster),
-    cluster_intermedio(Cluster),
-    supporto_globale(Gioco),
-    coerenza_genere(Gioco),
-    \+ budget_ridotto_compatibile(Gioco).
+    profilo_intermedio(Gioco),
+    \+ violazione_bloccante(Gioco, _).
 
 richiede_revisione(Gioco) :-
-    predizione_commerciale(Gioco, Cluster),
-    cluster_intermedio(Cluster),
+    prezzo_basso(Gioco),
     supporto_globale(Gioco),
-    budget_ridotto_compatibile(Gioco),
     coerenza_genere(Gioco),
-    \+ review_buona(Gioco),
-    \+ rischio_critico(Gioco).
+    \+ approva_finanziamento(Gioco).
 
 rifiuta_finanziamento(Gioco) :-
     violazione_bloccante(Gioco, _).
 
 rifiuta_finanziamento(Gioco) :-
-    predizione_commerciale(Gioco, Cluster),
-    cluster_rischio(Cluster),
-    \+ review_buona(Gioco).
+    rischio_critico(Gioco),
+    \+ richiede_revisione(Gioco).
 
 verdetto(Gioco, approvato) :-
     approva_finanziamento(Gioco).

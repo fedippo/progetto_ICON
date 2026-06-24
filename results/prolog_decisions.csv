@@ -1,5 +1,5 @@
-Game,Verdict,Approved,Needs_Review,Rejected,Blocking_Violations
-hades_like,approvato,True,False,False,
-short_puzzle_deluxe,revisione,False,True,False,
-underlocalized_action,rifiutato,False,False,True,localizzazione_insufficiente
-overpriced_multiplayer_rpg,rifiutato,False,False,True,incoerenza_genere;rischio_critico
+Game,Predicted_Cluster,Bayesian_Risk,Low_Review_Probability,Derived_Profile,Verdict,Approved,Needs_Review,Rejected,Blocking_Violations
+stellar_strategy_master,cluster_0,basso,0.0,successo,approvato,True,False,False,
+short_puzzle_deluxe,cluster_0,basso,0.0,medio,revisione,False,True,False,
+underlocalized_action,cluster_2,alto,0.572434,rischio,rifiutato,False,False,True,localizzazione_insufficiente;rischio_critico
+overpriced_multiplayer_rpg,cluster_2,alto,0.572434,rischio,rifiutato,False,False,True,incoerenza_genere;rischio_critico

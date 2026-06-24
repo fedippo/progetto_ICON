@@ -24,8 +24,10 @@ CLUSTER_SUMMARY_PATH = "results/cluster_summary.csv"  # Identikit dei cluster (m
 CLASS_DISTRIBUTION_PATH = "results/class_distribution.csv"  # Analisi dello sbilanciamento delle classi target
 SUPERVISED_METRICS_PATH = "results/supervised_metrics.csv"  # Performance dei modelli (F1, Accuracy, ecc.)
 SUPERVISED_BEST_PARAMS_PATH = "results/supervised_best_params.csv" # Configurazione ottimale eletta da GridSearchCV
+SUPERVISED_MODEL_PATH = "models/best_supervised_model.joblib"  # Miglior modello supervisionato salvato per la KB
 BAYESIAN_EDGES_PATH = "results/bayesian_edges.csv"  # Archi (relazioni di influenza) appresi dalla rete
 BAYESIAN_QUERIES_PATH = "results/bayesian_queries.csv"  # Risultati dell'inferenza probabilistica
+CATEGORY_MAPPINGS_PATH = "results/category_mappings.csv"  # Mappa tra codici interi e categorie testuali
 
 # File Prolog: regole manuali, fatti generati e verdetti finali.
 PROLOG_RULES_PATH = "kb/publisher_rules.pl"  # Base di conoscenza statica: le logiche decisionali del publisher
@@ -47,18 +49,18 @@ KMEANS_MAX_ITER = 300  # Numero massimo di iterazioni concesse per far converger
 # Parametri della valutazione supervisionata e della rete bayesiana.
 CV_SPLITS = 5  # Numero di fold per la Cross-Validation (i dati vengono divisi in 5 parti)
 CV_REPEATS = 3  # Quante volte ripetere la Cross-Validation per consolidare la deviazione standard
+SUPERVISED_N_JOBS = 1  # Esegue GridSearchCV in modo sequenziale per evitare saturazione di RAM/CPU sui laptop
+SUPERVISED_PRE_DISPATCH = "1*n_jobs"  # Limita il numero di job preparati in anticipo da joblib
 BAYESIAN_MAX_INDEGREE = 3  # Limite massimo di genitori per nodo nel DAG per evitare Tabelle di Probabilità intrattabili
+BAYESIAN_MEDIUM_RISK_THRESHOLD = 0.30  # Probabilità minima di recensioni basse per classificare rischio medio
+BAYESIAN_HIGH_RISK_THRESHOLD = 0.45  # Probabilità minima di recensioni basse per classificare rischio alto
 
 # Questi valori vengono letti da Python, trascritti in kb/generated_facts.pl e
 # infine interrogati dalle regole di publisher_rules.pl per le decisioni di finanziamento.
-MAX_GRANT_BUDGET = 150000
-REDUCED_GRANT_BUDGET = 75000
-MIN_GLOBAL_LANGUAGES = 3  # Requisito minimo di localizzazione per accedere al budget ridotto
-MIN_PREMIUM_LANGUAGES = 5  # Requisito minimo di localizzazione per sbloccare il budget massimo
+MIN_GLOBAL_LANGUAGES = 3  # Requisito minimo di localizzazione per considerare il gioco pubblicabile
+MIN_PREMIUM_LANGUAGES = 5  # Requisito minimo di localizzazione per considerare il supporto premium
 HIGH_PRICE_THRESHOLD = 30  # Un gioco in vendita a >= $30 viene considerato un investimento "ad alto rischio"
-LOW_PRICE_THRESHOLD = 10   # Un gioco in vendita a <= $10 è considerato di fascia "budget"
-LOW_REVIEW_SCORE_THRESHOLD = 60  # Soglia sotto la quale il progetto riceve un blocco sistemico
-GOOD_REVIEW_SCORE_THRESHOLD = 75  # Soglia di garanzia minima per l'approvazione standard
+LOW_PRICE_THRESHOLD = 10   # Un gioco in vendita a <= $10 è considerato di fascia economica
 
 # Colonne lette dal CSV grezzo in fase di importazione per risparmiare memoria RAM
 RAW_COLUMNS = [
@@ -105,13 +107,11 @@ CLUSTERING_FEATURES = [
     "Playtime_Hours",
 ]
 
-# Feature in input alla pipeline di Machine Learning per predire il target (Cluster_Label).
-# Include feature categoriche che verranno processate tramite OneHotEncoder.
+# Feature pre-lancio in input alla pipeline di Machine Learning per predire il target (Cluster_Label).
+# Non includono recensioni osservate, cosi il modello puo essere usato su proposte non ancora pubblicate.
 SUPERVISED_FEATURES = [
     "Primary_Genre",
     "Price",
-    "Review_Score_Pct",
-    "Review_Count",
     "Playtime_Hours",
     "Languages_Count",
     "Multiplayer",

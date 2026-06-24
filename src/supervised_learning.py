@@ -8,8 +8,10 @@ sovracampionamento (SMOTE) per gestire eventuali sbilanciamenti tra le dimension
 from __future__ import annotations
 
 from pathlib import Path
+import gc
 
 import pandas as pd
+from joblib import dump
 
 from config import (
     CATEGORICAL_FEATURES,
@@ -18,9 +20,12 @@ from config import (
     CV_REPEATS,
     CV_SPLITS,
     RANDOM_STATE,
+    SUPERVISED_N_JOBS,
+    SUPERVISED_PRE_DISPATCH,
     SUPERVISED_BEST_PARAMS_PATH,
     SUPERVISED_FEATURES,
     SUPERVISED_METRICS_PATH,
+    SUPERVISED_MODEL_PATH,
     TARGET_CLUSTER_COLUMN,
 )
 
@@ -166,7 +171,10 @@ def build_model_specs(ml, preprocessor):
     L'uso di `ImbPipeline` (da imbalanced-learn) garantisce matematicamente che lo SMOTE
     venga applicato unicamente durante la fase di '.fit()', mantenendo il test set immacolato.
     """
-    random_forest = ml["RandomForestClassifier"](random_state=RANDOM_STATE)
+    random_forest = ml["RandomForestClassifier"](
+        random_state=RANDOM_STATE,
+        n_jobs=SUPERVISED_N_JOBS,
+    )
     svm = ml["SVC"](random_state=RANDOM_STATE)
 
     # Ogni modello viene valutato sia senza SMOTE sia con SMOTE nel training fold.
@@ -307,8 +315,12 @@ def run_supervised_learning() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
 
     metric_rows = []
     parameter_rows = []
+    best_model = None
+    best_model_score = float("-inf")
+    best_model_name = None
 
     for spec in build_model_specs(ml, preprocessor):
+        print(f"Avvio esperimento: {spec['name']} | SMOTE={spec['use_smote']}")
         pipeline = spec["pipeline_cls"](steps=spec["steps"])
         search = ml["GridSearchCV"](
             estimator=pipeline,
@@ -316,7 +328,8 @@ def run_supervised_learning() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
             scoring=scoring,
             refit="f1_macro",
             cv=cv,
-            n_jobs=-1,
+            n_jobs=SUPERVISED_N_JOBS,
+            pre_dispatch=SUPERVISED_PRE_DISPATCH,
             return_train_score=False,
         )
         search.fit(x, y)
@@ -332,6 +345,15 @@ def run_supervised_learning() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
                 "Best_Params": search.best_params_,
             }
         )
+        if search.best_score_ > best_model_score:
+            best_model_score = search.best_score_
+            best_model = search.best_estimator_
+            best_model_name = f"{spec['name']} | SMOTE={spec['use_smote']}"
+
+        print(f"Completato esperimento: {spec['name']} | SMOTE={spec['use_smote']}")
+        del search
+        del pipeline
+        gc.collect()
 
     metrics_df = pd.DataFrame(metric_rows)
     params_df = pd.DataFrame(parameter_rows)
@@ -339,6 +361,9 @@ def run_supervised_learning() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
     Path(SUPERVISED_METRICS_PATH).parent.mkdir(parents=True, exist_ok=True)
     metrics_df.to_csv(SUPERVISED_METRICS_PATH, index=False)
     params_df.to_csv(SUPERVISED_BEST_PARAMS_PATH, index=False)
+    Path(SUPERVISED_MODEL_PATH).parent.mkdir(parents=True, exist_ok=True)
+    dump(best_model, SUPERVISED_MODEL_PATH)
+    print(f"Miglior modello salvato: {best_model_name} -> {SUPERVISED_MODEL_PATH}")
 
     return class_distribution, metrics_df, params_df
 

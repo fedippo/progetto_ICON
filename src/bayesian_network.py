@@ -4,10 +4,14 @@ from __future__ import annotations
 from pathlib import Path
 import pandas as pd
 from config import (
+    BAYESIAN_HIGH_RISK_THRESHOLD,
     BAYESIAN_EDGES_PATH,
     BAYESIAN_FEATURES,
     BAYESIAN_MAX_INDEGREE,
+    BAYESIAN_MEDIUM_RISK_THRESHOLD,
     BAYESIAN_QUERIES_PATH,
+    CATEGORY_MAPPINGS_PATH,
+    CLUSTERED_CLEAN_DATA_PATH,
     CLUSTERED_DISCRETIZED_DATA_PATH,
     TARGET_CLUSTER_COLUMN,
 )
@@ -109,17 +113,25 @@ def learn_structure(df: pd.DataFrame, pgmpy):
       piccole, calcolabili rapidamente e facilmente interpretabili in ambito business.
     """
     search = pgmpy["HillClimbSearch"](df)
+
+    def estimate_with_compatible_api(scoring_method):
+        try:
+            return search.estimate(
+                scoring_method=scoring_method,
+                max_indegree=BAYESIAN_MAX_INDEGREE,
+                show_progress=False,
+            )
+        except TypeError:
+            return search.estimate(
+                scoring_method=scoring_method,
+                max_indegree=BAYESIAN_MAX_INDEGREE,
+            )
+
     try:
-        return search.estimate(
-            scoring_method=pgmpy["BicScore"](df),
-            max_indegree=BAYESIAN_MAX_INDEGREE,
-        )
+        return estimate_with_compatible_api(pgmpy["BicScore"](df))
     except TypeError:
         # Compatibilita con API pgmpy che accettano il nome dello score come stringa.
-        return search.estimate(
-            scoring_method="bic-d",
-            max_indegree=BAYESIAN_MAX_INDEGREE,
-        )
+        return estimate_with_compatible_api("bic-d")
 
 
 def fit_model(df: pd.DataFrame, structure, pgmpy):
@@ -133,6 +145,7 @@ def fit_model(df: pd.DataFrame, structure, pgmpy):
     che le probabilità in ogni CPD sommino esattamente a 1).
     """
     model = pgmpy["BayesianModel"](structure.edges())
+    model.add_nodes_from(df.columns)
 
     if pgmpy["DiscreteMLE"] is not None:
         # API recente: fit richiede un estimatore discreto inizializzato (con le parentesi tonde vuote)
@@ -169,10 +182,10 @@ def most_common_state(df: pd.DataFrame, column: str) -> int:
 
 
 def highest_state(df: pd.DataFrame, column: str) -> int:
-    """Identifica lo stato discreto di valore numerico minimo per una data variabile.
+    """Identifica lo stato discreto di valore numerico massimo per una data variabile.
 
-    Come per 'highest_state', estrae il minimo (min) per automatizzare la costruzione
-    di query probabilistiche su scenari limite inferiori (es. "Prezzo molto basso").
+    Estrae il massimo (max) per automatizzare la costruzione di query probabilistiche
+    su scenari limite superiori, ad esempio "prezzo molto alto".
     """
     return int(df[column].max())
 
@@ -240,6 +253,134 @@ def query_low_review_risk(inference, evidence: dict) -> list[dict]:
     return rows
 
 
+def train_bayesian_model() -> tuple[pd.DataFrame, object, dict]:
+    """Addestra la rete e restituisce dataset, modello e dipendenze pgmpy."""
+    pgmpy = import_pgmpy_dependencies()
+    df = load_bayesian_dataset()
+    structure = learn_structure(df, pgmpy)
+    model = fit_model(df, structure, pgmpy)
+    return df, model, pgmpy
+
+
+def load_category_code_map() -> dict[str, dict[str, int]]:
+    """Carica la mappa categoria -> codice usata dal dataset discretizzato."""
+    mapping_path = Path(CATEGORY_MAPPINGS_PATH)
+    if not mapping_path.exists():
+        raise FileNotFoundError(
+            f"Category mappings not found at {mapping_path}. Run preprocessing.py first."
+        )
+
+    mappings_df = pd.read_csv(mapping_path)
+    code_map: dict[str, dict[str, int]] = {}
+    for _, row in mappings_df.iterrows():
+        column = str(row["Column"])
+        code_map.setdefault(column, {})[str(row["Value"])] = int(row["Code"])
+    return code_map
+
+
+def numeric_state_from_reference(
+    clean_df: pd.DataFrame,
+    discretized_df: pd.DataFrame,
+    column: str,
+    value: float,
+) -> int:
+    """Assegna a un valore reale lo stato discreto coerente con il preprocessing."""
+    reference = (
+        pd.DataFrame(
+            {
+                "value": clean_df[column],
+                "state": discretized_df[column].astype(int),
+            }
+        )
+        .dropna()
+        .sort_values("value")
+    )
+
+    for state in sorted(reference["state"].unique()):
+        state_values = reference.loc[reference["state"] == state, "value"]
+        if value <= state_values.max():
+            return int(state)
+
+    return int(reference["state"].max())
+
+
+def classify_low_review_risk(probability: float) -> str:
+    """Traduce la probabilita di recensioni basse in una classe leggibile da Prolog."""
+    if probability >= BAYESIAN_HIGH_RISK_THRESHOLD:
+        return "alto"
+    if probability >= BAYESIAN_MEDIUM_RISK_THRESHOLD:
+        return "medio"
+    return "basso"
+
+
+def build_game_evidence(
+    game: dict,
+    predicted_cluster: str,
+    clean_df: pd.DataFrame,
+    discretized_df: pd.DataFrame,
+    category_codes: dict[str, dict[str, int]],
+) -> dict[str, int]:
+    """Converte un gioco demo in evidenza discreta per l'inferenza bayesiana."""
+    genre_codes = category_codes.get("Primary_Genre", {})
+    evidence = {
+        "Primary_Genre": genre_codes.get(
+            str(game["primary_genre"]),
+            most_common_state(discretized_df, "Primary_Genre"),
+        ),
+        "Price": numeric_state_from_reference(
+            clean_df, discretized_df, "Price", float(game["price"])
+        ),
+        "Playtime_Hours": numeric_state_from_reference(
+            clean_df, discretized_df, "Playtime_Hours", float(game["hours"])
+        ),
+        "Languages_Count": numeric_state_from_reference(
+            clean_df, discretized_df, "Languages_Count", float(game["languages"])
+        ),
+        "Multiplayer": int(game["multiplayer"]),
+        TARGET_CLUSTER_COLUMN: int(str(predicted_cluster).replace("cluster_", "")),
+    }
+    return evidence
+
+
+def estimate_bayesian_risks(
+    games: list[dict],
+    predicted_clusters: dict[str, str],
+) -> dict[str, dict[str, float | str]]:
+    """Stima il rischio bayesiano dei giochi che verranno valutati da Prolog."""
+    clean_path = Path(CLUSTERED_CLEAN_DATA_PATH)
+    discretized_path = Path(CLUSTERED_DISCRETIZED_DATA_PATH)
+    if not clean_path.exists() or not discretized_path.exists():
+        raise FileNotFoundError("Clustered datasets not found. Run clustering.py first.")
+
+    clean_df = pd.read_csv(clean_path)
+    discretized_df = pd.read_csv(discretized_path)
+    _, model, pgmpy = train_bayesian_model()
+    inference = pgmpy["VariableElimination"](model)
+    category_codes = load_category_code_map()
+
+    risks: dict[str, dict[str, float | str]] = {}
+    for game in games:
+        evidence = build_game_evidence(
+            game,
+            predicted_clusters[game["name"]],
+            clean_df,
+            discretized_df,
+            category_codes,
+        )
+        result = inference.query(
+            variables=["Review_Score_Pct"],
+            evidence=evidence,
+            show_progress=False,
+        )
+        low_review_probability = float(result.values[0])
+        risks[game["name"]] = {
+            "risk": classify_low_review_risk(low_review_probability),
+            "low_review_probability": low_review_probability,
+        }
+
+    return risks
+
+
 def run_business_queries(df: pd.DataFrame, model, pgmpy) -> pd.DataFrame:
     """Orchestra e calcola un set di scenari decisionali tramite inferenza probabilistica.
 
@@ -283,6 +424,7 @@ def run_business_queries(df: pd.DataFrame, model, pgmpy) -> pd.DataFrame:
     )
 
     queries_df = pd.DataFrame(query_rows)
+    Path(BAYESIAN_QUERIES_PATH).parent.mkdir(parents=True, exist_ok=True)
     queries_df.to_csv(BAYESIAN_QUERIES_PATH, index=False)
     return queries_df
 
@@ -299,10 +441,7 @@ def run_bayesian_network() -> tuple[pd.DataFrame, pd.DataFrame]:
     6. Esecuzione e salvataggio delle query di business.
     Restituisce i DataFrame degli archi e delle query per log e ispezioni.
     """
-    pgmpy = import_pgmpy_dependencies()
-    df = load_bayesian_dataset()
-    structure = learn_structure(df, pgmpy)
-    model = fit_model(df, structure, pgmpy)
+    df, model, pgmpy = train_bayesian_model()
     edges_df = save_edges(model)
     queries_df = run_business_queries(df, model, pgmpy)
     return edges_df, queries_df
