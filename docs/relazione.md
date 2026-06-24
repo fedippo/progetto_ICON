@@ -64,6 +64,30 @@ Il progetto è realizzato in Python. Le librerie principali sono:
 - `pgmpy` per la rete bayesiana;
 - `pyswip` e SWI-Prolog per l'integrazione con Prolog.
 
+per avere tutto il necessario eseguire lo script:
+
+```text
+pip install -r requirements.txt
+```
+
+### File di configurazione centrale
+
+Il progetto utilizza un modulo dedicato (`config.py`) che centralizza tutti i parametri condivisi dalla pipeline. Questo file svolge il ruolo di Single Source of Truth: percorsi dei dataset, nomi dei file di output, parametri degli algoritmi di Machine Learning, soglie utilizzate dalla rete bayesiana e regole di business per la Knowledge Base Prolog sono definiti in un unico punto.
+
+Questa scelta progettuale offre diversi vantaggi. Innanzitutto migliora la manutenibilità del codice, poiché eventuali modifiche ai parametri globali possono essere effettuate senza intervenire nei singoli script della pipeline. Inoltre garantisce maggiore coerenza tra i moduli, riducendo il rischio di utilizzare configurazioni diverse nelle varie fasi del progetto. Infine favorisce la riproducibilità degli esperimenti, poiché tutti gli script condividono gli stessi percorsi, lo stesso seed casuale e le stesse impostazioni operative.
+
+Il file contiene in particolare:
+
+- percorsi dei dataset e dei file generati durante l'esecuzione;
+- parametri di preprocessing e campionamento;
+- configurazioni del clustering KMeans;
+- parametri di validazione e addestramento dei modelli supervisionati;
+- soglie utilizzate dalla rete bayesiana per classificare il rischio;
+- vincoli di business impiegati dalla Knowledge Base Prolog;
+- definizione delle feature utilizzate nelle diverse fasi della pipeline.
+
+In questo modo ogni componente del sistema rimane indipendente dal punto di vista implementativo, ma continua a condividere una configurazione comune e coerente con l'intero progetto.
+
 ### Struttura del progetto e avvio
 
 La struttura operativa è:
@@ -76,6 +100,7 @@ La struttura operativa è:
 | `kb/`             | regole Prolog e fatti generati                              |
 | `results/`        | metriche, grafici, query e verdetti                         |
 | `docs/`           | documentazione                                              |
+| `models/`         | miglior modello apprendimento supervisionato                |
 
 Gli script principali sono eseguiti nel seguente ordine:
 
@@ -387,6 +412,7 @@ Nel codice, questa parte è implementata in `src/bayesian_network.py`. Lo script
 | `Cluster_Label`    | `Price`            |
 | `Playtime_Hours`   | `Review_Count`     |
 | `Playtime_Hours`   | `Price`            |
+![grafo bayes](../results/bayesian_network.png)
 
 Gli archi più utili per il problema sono `Review_Count -> Cluster_Label`, `Cluster_Label -> Review_Score_Pct` e `Playtime_Hours -> Review_Count`, perché collegano comportamento commerciale, ricezione e durata.
 
@@ -423,9 +449,8 @@ La KB Prolog rappresenta il regolamento interno del publisher. Il suo compito no
 - durata stimata;
 - numero di lingue supportate;
 - presenza del multiplayer;
-- budget richiesto.
 
-Questa modifica rende la KB piu coerente con lo scenario pre-lancio: nei fatti Prolog non sono piu presenti review score, cluster predetti o livelli di rischio gia assegnati. Il sistema produce tre possibili verdetti:
+Oltre a queste caratteristiche intrinseche, la KB riceve in input anche i risultati probabilistici dei livelli precedenti: la predizione del cluster (dal Random Forest) e la stima del rischio (dalla Rete Bayesiana). Questa scelta rende la KB coerente con lo scenario decisionale pre-lancio: le recensioni finali (review score) non sono note, ma il sistema le "stima", delegando poi a Prolog l'applicazione di vincoli aziendali invalicabili. Il sistema produce tre possibili verdetti:
 
 - `approvato`;
 - `revisione`;
@@ -436,25 +461,23 @@ Questa modifica rende la KB piu coerente con lo scenario pre-lancio: nei fatti P
 I fatti principali sono ora:
 
 ```prolog
-gioco(Nome, Genere, Prezzo, OreStimate, Lingue, Multiplayer, Budget).
+gioco(Nome, Genere, Prezzo, OreStimate, Lingue, Multiplayer).
+predizione_commerciale(Nome, Cluster).
+rischio_bayesiano(Nome, LivelloRischio).
 ```
 
-Le regole sono mantenute in `kb/publisher_rules.pl`. I fatti sono generati automaticamente in `kb/generated_facts.pl` dallo script `src/prolog_reasoning.py`. Questa separazione evita di modificare manualmente i casi dimostrativi e distingue la conoscenza stabile del dominio dai dati della proposta di gioco.
+Le regole sono mantenute in `kb/publisher_rules.pl`. La separazione tra regole e fatti è una scelta implementativa cruciale:
 
-La separazione tra regole e fatti e una scelta implementativa importante:
-
-- le regole rappresentano conoscenza stabile del publisher;
-- i fatti rappresentano proposte di gioco valutabili prima del lancio;
-- Prolog deriva profilo, rischio e verdetto finale;
-- il file generato non contiene piu decisioni gia note.
+- le regole (codificate a mano) rappresentano la governance aziendale invalicabile;
+- i fatti rappresentano i dati della proposta di gioco e le predizioni dei modelli di AI;
+- Prolog fonde questi due mondi per derivare il verdetto finale
 
 ### Regole implementate
 
 La KB contiene regole per:
 
-- supporto globale: almeno 3 lingue;
+- supporto globale: almeno 3 lingue;    
 - supporto premium: almeno 5 lingue;
-- compatibilita del budget standard e ridotto;
 - prezzo alto o basso;
 - coerenza tra genere e durata stimata;
 - profilo commerciale derivato: successo, intermedio o rischio;
@@ -462,37 +485,40 @@ La KB contiene regole per:
 - violazioni bloccanti;
 - approvazione, revisione e rifiuto.
 
-Le soglie principali sono definite come fatti Prolog generati da Python: budget standard, budget ridotto, prezzo alto, prezzo basso e soglie minime di localizzazione. Non sono piu presenti soglie di review score, perche le recensioni non sono note prima della pubblicazione.
+Le soglie principali sono definite come fatti Prolog generati da Python: prezzo alto, prezzo basso e soglie minime di localizzazione. Non sono più presenti soglie di review score, poiché non sono note prima della pubblicazione.
 
-Esempio di logica decisionale:
+Esempio di logica decisionale ibrida:
 
-- un gioco puo essere approvato se ha profilo di successo, supporto premium, budget compatibile, coerenza genere-durata e rischio accettabile;
-- un gioco puo richiedere revisione se e coerente e localizzato, ma presenta rischio medio, ad esempio per prezzo alto;
-- un gioco viene rifiutato se presenta localizzazione insufficiente, incoerenza tra genere e durata, budget eccessivo o combinazioni di rischio critico.
+- un gioco viene **approvato** se il modello ML lo inserisce in un cluster di successo, ha un rischio bayesiano basso, e contemporaneamente soddisfa vincoli di supporto lingue premium e coerenza genere-durata;
+- un gioco richiede **revisione** se è coerente e localizzato, ma presenta indicatori di rischio medio (es. prezzo alto o cluster intermedio);
+- un gioco viene **rifiutato** se presenta una violazione bloccante: queste spaziano da fattori umani (localizzazione insufficiente, incoerenza tra genere e durata) a previsioni algoritmiche estremamente negative (rischio bayesiano alto).
 
-La regola di coerenza genere-durata evita che la KB si limiti a confrontare valori isolati. Ad esempio, un RPG con durata molto bassa viene considerato incoerente rispetto alle aspettative commerciali del genere, mentre un puzzle game puo essere coerente anche con una durata piu breve.
+La regola di coerenza genere-durata evita che la KB si limiti a confrontare valori isolati. Ad esempio, un RPG con durata molto bassa viene considerato incoerente rispetto alle aspettative commerciali del genere, mentre un puzzle game può essere coerente anche con una durata più breve.
 
-### Perche la KB non e pattern matching
+### Perché la KB non e pattern matching
 
-La KB non si limita a cercare fatti espliciti. Il verdetto viene derivato da catene di regole. Ad esempio:
+L'aspetto centrale di questa architettura è che Prolog agisce come un manager validatore. Non si fida ciecamente dei modelli di Machine Learning, ma li subordina a regole di business. Ad esempio:
 
-- `verdetto/2` dipende da `approva_finanziamento/1`, `richiede_revisione/1` e `rifiuta_finanziamento/1`;
-- `approva_finanziamento/1` dipende da `profilo_successo/1` e `rischio_accettabile/1`;
-- `profilo_successo/1`, `profilo_intermedio/1` e `profilo_rischio/1` sono concetti derivati dalle caratteristiche pre-lancio;
-- `violazione_bloccante/2` astrae cause diverse di rifiuto, come localizzazione insufficiente, incoerenza, budget eccessivo o rischio critico.
+- `verdetto/2` dipende da catene di regole quali `approva_finanziamento/1` o `violazione_bloccante/2`;
+- `approva_finanziamento/1` esige il superamento di requisiti aziendali stringenti (es. `supporto_premium/1`) oltre ad un esito favorevole delle AI (`predizione_commerciale/2` e `rischio_bayesiano/2`).
+- `violazione_bloccante/2` astrae cause diverse di rifiuto: un gioco predestinato al successo dall'algoritmo verrà inesorabilmente scartato da Prolog se fallisce i requisiti di localizzazione (`localizzazione_insufficiente`) o risulta irrealistico (`incoerenza_genere`).
 
-Questa struttura rende la KB piu autonoma: i fatti descrivono una proposta, mentre le regole decidono come interpretarla.
-
-Un'alternativa sarebbe stata mantenere cluster, rischio e review score come fatti gia pronti. Questa soluzione e stata scartata perche avrebbe ridotto il ragionamento Prolog a una forma di post-processing: la KB avrebbe ricevuto informazioni troppo vicine al verdetto finale. La nuova versione e piu coerente con un KBS, perche costruisce internamente concetti intermedi e decisioni.
+Questa ibridazione risolve il problema delle "black-box" del Machine Learning: il sistema sfrutta l'Intelligenza Artificiale per generalizzare pattern complessi sui dati, ma garantisce al publisher l'ultima parola tramite una logica deduttiva, interpretabile e totalmente deterministica.
 
 ### Risultati dimostrativi
 
 I quattro casi sono stati scelti per coprire comportamenti diversi senza inserire nei fatti la decisione attesa:
 
-- `hades_like`: RPG coerente, ben localizzato, prezzo non alto e budget compatibile;
-- `short_puzzle_deluxe`: puzzle coerente e ben localizzato, ma con prezzo alto;
-- `underlocalized_action`: action game con localizzazione insufficiente;
-- `overpriced_multiplayer_rpg`: RPG troppo corto, prezzo alto, multiplayer e budget eccessivo.
+| **Gioco**                    | **Cluster** | **Rischio Bayes.** | **Profilo** | **Verdetto** | **Violazioni**          |
+| ---------------------------- | ----------- | ------------------ | ----------- | ------------ | ----------------------- |
+| `stellar_strategy_master`    | cluster_0   | basso              | successo    | approvato    | -                       |
+| `short_puzzle_deluxe`        | cluster_0   | basso              | medio       | revisione    | -                       |
+| `underlocalized_action`      | cluster_2   | alto               | rischio     | rifiutato    | localizzazione; rischio |
+| `overpriced_multiplayer_rpg` | cluster_2   | alto               | rischio     | rifiutato    | incoerenza; rischio     |
+- **`stellar_strategy_master`**: Il gioco rispetta tutti i parametri di business ed è supportato da una predizione ML di successo e un profilo di rischio basso, portando all'**approvazione** automatica.
+- **`short_puzzle_deluxe`**: Sebbene il cluster sia promettente (`cluster_0`), il sistema assegna lo stato di **revisione** perché il profilo di rischio è solo "medio" (dovuto al prezzo elevato), obbligando a una valutazione umana prima di procedere.
+- **`underlocalized_action`**: Nonostante appartenga a un cluster commerciale discreto, il gioco viene **rifiutato** per due violazioni bloccanti: la localizzazione è insufficiente (sotto la soglia minima) e il rischio bayesiano è troppo elevato.
+- **`overpriced_multiplayer_rpg`**: Verdetto di **rifiuto** netto. Oltre al rischio critico, il sistema ha rilevato un'incoerenza logica (genere/durata/prezzo) che invalida la proposta commerciale a prescindere dalle potenzialità del genere.
 
 Dopo l'esecuzione di `src/prolog_reasoning.py`, i verdetti vengono salvati in `results/prolog_decisions.csv`.
 

@@ -16,6 +16,58 @@ from config import (
     TARGET_CLUSTER_COLUMN,
 )
 
+import networkx as nx
+import matplotlib.pyplot as plt
+
+def save_network_plot(edges_df):
+    """Genera una rappresentazione grafica della struttura della rete bayesiana appresa.
+
+    Funzionamento:
+        - Riceve il DataFrame degli archi prodotto da `save_edges()`, contenente le colonne
+        "Source" e "Target" che descrivono le dipendenze dirette tra le variabili della rete.
+        - Costruisce un grafo orientato (`DiGraph`) di NetworkX aggiungendo un arco per ogni
+        relazione appresa durante lo structure learning.
+        - Calcola automaticamente la disposizione dei nodi tramite `spring_layout`, un algoritmo
+        force-directed che simula attrazione tra nodi collegati e repulsione tra nodi non collegati.
+        Il parametro `k=3` aumenta la distanza media tra i nodi per ridurre sovrapposizioni e
+        migliorare la leggibilità del diagramma.
+        - Disegna il grafo completo con frecce orientate, etichette dei nodi e dimensioni uniformi,
+        ottenendo una visualizzazione intuitiva della topologia della rete bayesiana.
+        - Esporta infine l'immagine in formato PNG nella cartella `results/`, permettendo di
+        includere facilmente la struttura appresa nella documentazione e nella relazione finale.
+
+    La visualizzazione ha scopo interpretativo: mostra le dipendenze probabilistiche apprese
+    tra le variabili ma non deve essere interpretata come una dimostrazione di causalità.
+    """
+    G = nx.DiGraph()
+
+    for _, row in edges_df.iterrows():
+        G.add_edge(row["Source"], row["Target"])
+
+    plt.figure(figsize=(14, 8))
+
+    pos = nx.spring_layout(
+        G,
+        seed=42,
+        k=3
+    )
+
+    nx.draw_networkx(
+        G,
+        pos,
+        arrows=True,
+        with_labels=True,
+        node_size=3000,
+        font_size=9
+    )
+
+    plt.title("Steam Commercial Bayesian Network")
+    plt.axis("off")
+    plt.tight_layout()
+    plt.savefig("results/bayesian_network.png", dpi=300)
+    plt.close()
+
+
 def import_pgmpy_dependencies():
     """Importa pgmpy gestendo le differenze architetturali tra le varie versioni della libreria.
 
@@ -50,7 +102,6 @@ def import_pgmpy_dependencies():
     except ImportError:
         from pgmpy.models import BayesianNetwork as BayesianModel
 
-    # NUOVA GESTIONE IMPORT: cerca DiscreteMLE anche nel nuovo modulo parameter_estimator
     try:
         from pgmpy.parameter_estimator import DiscreteMLE
     except ImportError:
@@ -443,6 +494,7 @@ def run_bayesian_network() -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     df, model, pgmpy = train_bayesian_model()
     edges_df = save_edges(model)
+    save_network_plot(edges_df)
     queries_df = run_business_queries(df, model, pgmpy)
     return edges_df, queries_df
 

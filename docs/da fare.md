@@ -1,4 +1,4 @@
-- [ ] nella relazione aggiungere come configurare con requirments.txt e spiegazione config
+- [x] nella relazione aggiungere come configurare con requirments.txt e spiegazione config
 - [ ] il perchè one-hot prima no poi si nella relazione
-- [ ] creare il grafico con i nodi della rete bayesana
-- [ ] nella fase prolog predice da solo se un gioco è accettato o no o gli vengono inseriti dati come il reviewscore che glielo dicono già?
+- [x] creare il grafico con i nodi della rete bayesana
+- [x] nella fase prolog predice da solo se un gioco è accettato o no o gli vengono inseriti dati come il reviewscore che glielo dicono già?
